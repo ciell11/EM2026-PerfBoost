@@ -8,14 +8,16 @@ using UnityEngine;
 namespace EM2026PerfBoost.Modules
 {
     /// <summary>
-    /// Accelerates inter-day transition pauses safely (never touches 3D match Time.timeScale)
-    /// and measures actual day-advance durations for live F9 telemetry.
+    /// Accelerates inter-day transition pauses safely (with an automatic Time.timeScale watchdog so
+    /// timeScale can NEVER get stuck on scene/menu switches) and profiles ContractEngine.NextDay
+    /// sub-passes for empirical F9 telemetry.
     /// </summary>
     internal static class DaySpeedBooster
     {
         private static long _dayStartTimestamp;
         private static bool _coreDayPaceAttached;
         private static bool _standaloneBoostActive;
+        private static float _highTimeScaleSince = -1f;
 
         public static void InstallGamePatches(Harmony harmony)
         {
@@ -38,12 +40,34 @@ namespace EM2026PerfBoost.Modules
                     harmony.Patch(nextDayDate, prefix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(NextDayDate_Prefix)));
                 }
 
+                // Lightweight ContractEngine sub-pass telemetry (helps diagnose 5-8s day ticks empirically)
+                PatchSubPass(harmony, typeof(ContractEngine), nameof(ContractEngine.RunDailyAiPasses), nameof(DailyAi_Pre), nameof(DailyAi_Post));
+                PatchSubPass(harmony, typeof(ContractEngine), nameof(ContractEngine.TickAiSquadMaintenance), nameof(Maint_Pre), nameof(Maint_Post));
+                PatchSubPass(harmony, typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers), nameof(AiTransfers_Pre), nameof(AiTransfers_Post));
+                PatchSubPass(harmony, typeof(AiListingPasses), nameof(AiListingPasses.AIListedPlayerInterestPass), nameof(ListedPass_Pre), nameof(ListedPass_Post));
+
                 Plugin.Logger.LogMessage($"[DaySpeedBooster] Active (FastDayTransitions={Plugin.CfgFastDayTransitions.Value}, DayPauseSpeed={Plugin.CfgDayPauseSpeed.Value:0.#}x).");
             }
             catch (Exception ex)
             {
                 Plugin.Logger.LogWarning($"[DaySpeedBooster] Game patch warning: {ex.Message}");
             }
+        }
+
+        private static void PatchSubPass(Harmony harmony, Type type, string methodName, string preName, string postName)
+        {
+            try
+            {
+                var m = AccessTools.Method(type, methodName);
+                if (m != null)
+                {
+                    harmony.Patch(
+                        m,
+                        prefix: new HarmonyMethod(typeof(DaySpeedBooster), preName),
+                        postfix: new HarmonyMethod(typeof(DaySpeedBooster), postName));
+                }
+            }
+            catch { }
         }
 
         public static void AttachToCore(Harmony coreHarmony, Assembly coreAsm)
@@ -71,16 +95,46 @@ namespace EM2026PerfBoost.Modules
 
         public static void OnSceneChanged(bool in3DMatch)
         {
-            if (in3DMatch && _standaloneBoostActive)
+            ResetTimeScaleIfBoosted();
+        }
+
+        public static void ResetState()
+        {
+            ResetTimeScaleIfBoosted();
+            Interlocked.Exchange(ref _dayStartTimestamp, 0);
+        }
+
+        public static void Tick(bool in3DMatch)
+        {
+            if (in3DMatch) return;
+            try
             {
-                _standaloneBoostActive = false;
-                try
+                // Safety watchdog: never allow Time.timeScale to stay elevated (> 1.5x) outside active day skipping
+                if (Time.timeScale > 1.5f)
                 {
-                    if (Time.timeScale > 1.01f)
-                        Time.timeScale = 1f;
+                    if (_highTimeScaleSince < 0f)
+                        _highTimeScaleSince = Time.unscaledTime;
+                    else if (!CalendarController.IsDayBeingComputed && Time.unscaledTime - _highTimeScaleSince > 0.75f)
+                        ResetTimeScaleIfBoosted();
                 }
-                catch { }
+                else
+                {
+                    _highTimeScaleSince = -1f;
+                }
             }
+            catch { }
+        }
+
+        private static void ResetTimeScaleIfBoosted()
+        {
+            _standaloneBoostActive = false;
+            _highTimeScaleSince = -1f;
+            try
+            {
+                if (Time.timeScale > 1.05f)
+                    Time.timeScale = 1f;
+            }
+            catch { }
         }
 
         private static void BeginDay_Prefix()
@@ -105,11 +159,11 @@ namespace EM2026PerfBoost.Modules
                 if (!Plugin.CfgFastDayTransitions.Value || Plugin.In3DMatchScene)
                     return;
 
-                // Only boost when iamgri's DayPace has already put Time.timeScale into inter-day pause mode (> 1x)
                 float desired = Math.Clamp(Plugin.CfgDayPauseSpeed.Value, 1f, 100f);
                 if (Time.timeScale > 1.5f && desired > Time.timeScale)
                 {
                     Time.timeScale = desired;
+                    _highTimeScaleSince = Time.unscaledTime;
                     Interlocked.Increment(ref PerfTelemetry.DayPausesAccelerated);
                 }
             }
@@ -120,7 +174,6 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
-                // Only run standalone fallback if EMSkinCore.DayPace is NOT present
                 if (_coreDayPaceAttached || !Plugin.CfgFastDayTransitions.Value || Plugin.In3DMatchScene)
                     return;
 
@@ -131,6 +184,7 @@ namespace EM2026PerfBoost.Modules
                     {
                         Time.timeScale = desired;
                         _standaloneBoostActive = true;
+                        _highTimeScaleSince = Time.unscaledTime;
                         Interlocked.Increment(ref PerfTelemetry.DayPausesAccelerated);
                     }
                 }
@@ -142,14 +196,23 @@ namespace EM2026PerfBoost.Modules
         {
             if (!_standaloneBoostActive)
                 return;
-
-            _standaloneBoostActive = false;
-            try
-            {
-                if (Time.timeScale > 1.01f)
-                    Time.timeScale = 1f;
-            }
-            catch { }
+            ResetTimeScaleIfBoosted();
         }
+
+        // ContractEngine sub-pass timing hooks
+        private static void DailyAi_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void DailyAi_Post(long __state) => PerfTelemetry.AddSubPass(0, ElapsedMs(__state));
+
+        private static void Maint_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void Maint_Post(long __state) => PerfTelemetry.AddSubPass(1, ElapsedMs(__state));
+
+        private static void AiTransfers_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void AiTransfers_Post(long __state) => PerfTelemetry.AddSubPass(2, ElapsedMs(__state));
+
+        private static void ListedPass_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void ListedPass_Post(long __state) => PerfTelemetry.AddSubPass(3, ElapsedMs(__state));
+
+        private static long ElapsedMs(long start) =>
+            start > 0 ? (Stopwatch.GetTimestamp() - start) * 1000L / Stopwatch.Frequency : 0;
     }
 }

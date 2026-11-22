@@ -16,13 +16,19 @@ namespace EM2026PerfBoost
         public static long InboxRenewsExecuted;
         public static long TalkRenewsSkipped;
         public static long TalkRenewsExecuted;
-        public static long TransfersHiddenSkipped;
         public static long ShopHiddenSkipped;
         public static long BasecampHiddenSkipped;
-        public static long SquadHiddenSkipped;
-        public static long StaffHiddenSkipped;
         public static long RaycastersDisabled;
-        public static long HiddenLayoutsDisabled;
+
+        public static long[] SubPassMs = new long[4];
+        public static long[] SubPassCalls = new long[4];
+
+        public static void AddSubPass(int idx, long ms)
+        {
+            if (idx < 0 || idx >= SubPassMs.Length || ms < 0) return;
+            Interlocked.Increment(ref SubPassCalls[idx]);
+            Interlocked.Add(ref SubPassMs[idx], ms);
+        }
 
         public static long AiPoolCacheHits;
         public static long AiPoolCacheMisses;
@@ -106,12 +112,13 @@ namespace EM2026PerfBoost
             }
 
             sb.AppendLine(string.Format(inv, "[Autosave] Coalesced after-match saves: {0} (est. ~{1:0.0}s saved), allowed: {2}", Interlocked.Read(ref AutosavesCoalesced), Interlocked.Read(ref AutosavesCoalesced) * 3.2, Interlocked.Read(ref AutosavesAllowed)));
-            sb.AppendLine($"[Hidden UI] Inbox {Interlocked.Read(ref InboxRenewsSkipped)}/{Interlocked.Read(ref InboxRenewsSkipped) + Interlocked.Read(ref InboxRenewsExecuted)} | Talk {Interlocked.Read(ref TalkRenewsSkipped)}/{Interlocked.Read(ref TalkRenewsSkipped) + Interlocked.Read(ref TalkRenewsExecuted)} | Squad {Interlocked.Read(ref SquadHiddenSkipped)} | Staff {Interlocked.Read(ref StaffHiddenSkipped)} | Transfers {Interlocked.Read(ref TransfersHiddenSkipped)} | Shop {Interlocked.Read(ref ShopHiddenSkipped)} | Basecamp {Interlocked.Read(ref BasecampHiddenSkipped)} | Raycasters {Interlocked.Read(ref RaycastersDisabled)} | Layouts {Interlocked.Read(ref HiddenLayoutsDisabled)}");
+            sb.AppendLine($"[Hidden UI] Inbox {Interlocked.Read(ref InboxRenewsSkipped)}/{Interlocked.Read(ref InboxRenewsSkipped) + Interlocked.Read(ref InboxRenewsExecuted)} | Talk {Interlocked.Read(ref TalkRenewsSkipped)}/{Interlocked.Read(ref TalkRenewsSkipped) + Interlocked.Read(ref TalkRenewsExecuted)} | Shop {Interlocked.Read(ref ShopHiddenSkipped)} | Basecamp {Interlocked.Read(ref BasecampHiddenSkipped)} | Raycasters {Interlocked.Read(ref RaycastersDisabled)}");
             sb.AppendLine($"[AiIdentity.Pool] Cache hits: {Interlocked.Read(ref AiPoolCacheHits)}, rebuilds: {Interlocked.Read(ref AiPoolCacheMisses)}");
 
             long days = Interlocked.Read(ref DaysAdvanced);
             double dayAvg = days > 0 ? (double)Interlocked.Read(ref DaysTotalMs) / days : 0;
             sb.AppendLine(string.Format(inv, "[Days] Advanced: {0}, avg {1:0.0} ms, max {2} ms | Pauses accelerated: {3}", days, dayAvg, Interlocked.Read(ref DaysMaxMs), Interlocked.Read(ref DayPausesAccelerated)));
+            sb.AppendLine($"[ContractEngine] DailyAi: {Interlocked.Read(ref SubPassMs[0])}ms ({Interlocked.Read(ref SubPassCalls[0])}x) | Maint: {Interlocked.Read(ref SubPassMs[1])}ms ({Interlocked.Read(ref SubPassCalls[1])}x) | AITransfers: {Interlocked.Read(ref SubPassMs[2])}ms ({Interlocked.Read(ref SubPassCalls[2])}x) | Listed: {Interlocked.Read(ref SubPassMs[3])}ms ({Interlocked.Read(ref SubPassCalls[3])}x)");
 
             sb.AppendLine($"[FPS] Target: {Plugin.CfgTargetFps.Value} (VSyncOff={Plugin.CfgDisableVSync.Value}), enforcements: {Interlocked.Read(ref FpsEnforcements)}");
             sb.AppendLine($"[LongCareer] Idle cleanups: {Interlocked.Read(ref MemoryCleanups)} (freed {Interlocked.Read(ref MemoryFreedMbTotal)} MB, last heap {Interlocked.Read(ref MemoryLastHeapMb)} MB) | Slot cache flushes: {Interlocked.Read(ref SlotCacheFlushes)}");

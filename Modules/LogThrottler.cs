@@ -2,14 +2,15 @@ using System;
 using System.Threading;
 using BepInEx.Logging;
 using HarmonyLib;
+using UnityEngine;
 
 namespace EM2026PerfBoost.Modules
 {
     /// <summary>
-    /// Eliminates synchronous Win32 WriteConsole stalls caused by thousands of verbose Info/Debug log lines
-    /// from iamgri mod and Iamgri Better during day ticks and UI clicks.
-    /// Always preserves Fatal, Error, Warning, Message, and all EM2026 PerfBoost logs.
-    /// Disk LogOutput.log stays 100% intact by default (CfgQuietDiskInfo = false).
+    /// 1. Eliminates synchronous Win32 WriteConsole stalls caused by thousands of verbose Info/Debug lines
+    ///    from iamgri mod and Iamgri Better during day ticks and UI clicks.
+    /// 2. Disables expensive native stack-trace walking on Unity's Debug.Log / Debug.LogWarning calls
+    ///    (keeping Error, Assert, and Exception stack traces 100% enabled!) to prevent Player.log freeze storms.
     /// </summary>
     internal static class LogThrottler
     {
@@ -17,6 +18,16 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
+                if (Plugin.CfgStripUnityLogStackTraces.Value)
+                {
+                    try
+                    {
+                        Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
+                        Application.SetStackTraceLogType(LogType.Warning, StackTraceLogType.None);
+                    }
+                    catch { }
+                }
+
                 var consoleLogEvent = AccessTools.Method(
                     typeof(ConsoleLogListener),
                     nameof(ConsoleLogListener.LogEvent),
@@ -47,7 +58,8 @@ namespace EM2026PerfBoost.Modules
                         });
                 }
 
-                Plugin.Logger.LogMessage($"[LogThrottler] Active (QuietConsoleInfo={Plugin.CfgQuietConsoleInfo.Value}, QuietDiskInfo={Plugin.CfgQuietDiskInfo.Value}).");
+                Plugin.Logger.LogMessage(
+                    $"[LogThrottler] Active (QuietConsoleInfo={Plugin.CfgQuietConsoleInfo.Value}, QuietDiskInfo={Plugin.CfgQuietDiskInfo.Value}, StripUnityLogStackTraces={Plugin.CfgStripUnityLogStackTraces.Value}).");
             }
             catch (Exception ex)
             {
@@ -59,7 +71,6 @@ namespace EM2026PerfBoost.Modules
         {
             if (args == null) return false;
 
-            // Never suppress Fatal, Error, Warning, or Message
             var level = args.Level;
             if (level != LogLevel.Info && level != LogLevel.Debug)
                 return false;

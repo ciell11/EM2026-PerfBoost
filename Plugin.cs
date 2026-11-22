@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.3.1";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -51,6 +51,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<int> CfgAiPoolMaxCacheDays;
         internal static ConfigEntry<bool> CfgQuietConsoleInfo;
         internal static ConfigEntry<bool> CfgQuietDiskInfo;
+        internal static ConfigEntry<bool> CfgStripUnityLogStackTraces;
         internal static ConfigEntry<bool> CfgSmoothIncrementalGc;
         internal static ConfigEntry<int> CfgGcSliceMs;
         internal static ConfigEntry<bool> CfgPeriodicTelemetry;
@@ -195,11 +196,11 @@ namespace EM2026PerfBoost
 
             CfgSkipHiddenVanillaUi = Config.Bind(
                 "UI", "SkipHiddenVanillaUiRebuilds", true,
-                "Skips redundant hidden vanilla window rebuilds (Squad/Staff/Transfers/Shop/Basecamp once iamgri pages are built, and unchanged Inbox/Talk windows) while keeping all data 100% live.");
+                "Skips safe hidden vanilla rebuilds (Shop/Basecamp once iamgri pages are built, and unchanged Inbox/Talk windows). Squad/Staff/Transfers are NEVER skipped so all player/staff/listing actions work 100%.");
 
             CfgDisableHiddenRaycasters = Config.Bind(
                 "UI", "DisableHiddenGraphicRaycasters", true,
-                "Disables GraphicRaycaster, LayoutGroup, and ContentSizeFitter on vanilla canvases hidden by iamgri mod (UiKit.Unseen) to avoid wasted raycasts and layout rebuilds.");
+                "Disables GraphicRaycaster on vanilla canvases hidden by iamgri mod (UiKit.Unseen) without touching layouts.");
 
             CfgAiPoolCache = Config.Bind(
                 "Simulation", "CacheAiIdentityPools", true,
@@ -217,6 +218,10 @@ namespace EM2026PerfBoost
             CfgQuietDiskInfo = Config.Bind(
                 "Logging", "QuietDiskInfo", false,
                 "Also filters verbose Info spam from LogOutput.log on disk. Keep false if you need full logs for bug reports.");
+
+            CfgStripUnityLogStackTraces = Config.Bind(
+                "Logging", "StripUnityLogStackTraces", true,
+                "Disables native stack-trace capture on Unity Debug.Log and Debug.LogWarning (keeps Error/Exception stack traces 100% enabled) to eliminate Player.log disk/CPU storms.");
 
             CfgSmoothIncrementalGc = Config.Bind(
                 "Memory", "SmoothIncrementalGC", false,
@@ -282,8 +287,9 @@ namespace EM2026PerfBoost
                     AttachToCore(newCore);
                 }
 
-                // Periodic lightweight enforcement & idle memory guard
+                // Periodic lightweight enforcement, timeScale watchdog & idle memory guard
                 FpsUnlocker.Tick(_in3DMatchScene);
+                DaySpeedBooster.Tick(_in3DMatchScene);
                 LongCareerGuard.Tick(_in3DMatchScene);
 
                 // UI frame timing (never runs inside 3D matches)
