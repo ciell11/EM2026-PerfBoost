@@ -18,6 +18,7 @@ namespace EM2026PerfBoost.Modules
         private static bool _coreDayPaceAttached;
         private static bool _standaloneBoostActive;
         private static float _highTimeScaleSince = -1f;
+        private static float _nextWatchdogTime;
 
         public static void InstallGamePatches(Harmony harmony)
         {
@@ -113,14 +114,19 @@ namespace EM2026PerfBoost.Modules
         public static void Tick(bool in3DMatch)
         {
             if (in3DMatch) return;
+            float now = Time.unscaledTime;
+            if (now < _nextWatchdogTime)
+                return;
+            _nextWatchdogTime = now + 0.25f;
+
             try
             {
                 // Safety watchdog: never allow Time.timeScale to stay elevated (> 1.5x) outside active day skipping
                 if (Time.timeScale > 1.5f)
                 {
                     if (_highTimeScaleSince < 0f)
-                        _highTimeScaleSince = Time.unscaledTime;
-                    else if (!CalendarController.IsDayBeingComputed && Time.unscaledTime - _highTimeScaleSince > 0.75f)
+                        _highTimeScaleSince = now;
+                    else if (!CalendarController.IsDayBeingComputed && now - _highTimeScaleSince > 0.75f)
                         ResetTimeScaleIfBoosted();
                 }
                 else

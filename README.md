@@ -13,12 +13,12 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 
 | Module | What It Does |
 |---|---|
-| **FPS Unlocker** (`FpsUnlocker`) | Unlocks UI frame rate to **`165 FPS`** by default (configurable in `.cfg`, `0` = vanilla, `-1` = uncapped) with VSync toggle. Makes menus/scrolling noticeably smoother **and** accelerates Unity coroutine `yield return null` steps during day advancement (`CalendarController.NextDayLoop` / `StartEventsSequentially`). |
+| **FPS Unlocker** (`FpsUnlocker`) | Unlocks UI frame rate to **`165 FPS`** by default (configurable in `.cfg`, `0` = vanilla, `-1` = uncapped) with VSync toggle **and Windows 1 ms multimedia timer precision (`timeBeginPeriod(1)`)** so `165 FPS` holds rock-solid instead of drifting down to ~145–153 FPS with sleep jitter. |
 | **Faster Day Transitions** (`DaySpeedBooster`) | Accelerates the dead inter-day pause (`60x` default vs `20x`, strictly outside 3D matches and automatically restored before the next day starts) and tracks real day-advance timings in `F9` telemetry. |
 | **Long-Career Memory & Stability Guard** (`LongCareerGuard`) | Protects multi-season careers (2028–2035+) from 5–6+ GB heap bloat and sudden 2.5s GC stalls by running gentle cleanups **only while idle in menus** (never during 3D matches, day simulation, or saves). Also flushes all internal caches cleanly on career/slot switches so stale pointers never persist. |
 | **Smart After-Match Autosave** (`SmartAutosave`) | When another mod enables saving after every match, coalesces redundant back-to-back 3–4s full saves within a configurable interval (default `180s`). **Never** skips periodic `AutosaveEveryDays` saves, manual saves, or exit-to-menu saves. |
 | **Hidden Vanilla UI Skipper** (`HiddenUiSkipper`) | Exact dirty-check memoization for `InboxWindow.Renew` and `TalkWindow.Renew`; skips hidden `ShopWindow_v2` and `Basecamp_v2` rebuilds once `iamgri mod` pages are built; disables `GraphicRaycaster` on hidden `UiKit.Unseen` canvases. (`SquadWindow`, `SquadStaffWindow`, and `TransfersWindow` are left untouched so all player/staff/listing actions work 100%.) |
-| **Fast AI Transfers Bucket Pruner** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs (`Dormant.Is` / `LockedClub.IsClub`) out of `AiAcquisitionPasses.AITransfers` buckets before its daily `O(teams × players)` candidate scan — eliminating hundreds of thousands of wasted IL2CPP→Harmony calls every single day with **100% identical** transfer outcomes. |
+| **Fast AI Transfers Accelerator** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs from `AiAcquisitionPasses.AITransfers` buckets **and** wraps 12 hot per-pass pure lookups (including `GetMinAskingPrice` with 7 stacked Harmony detours, `GetTransferCost`, `ComputeWage`, `HasActiveNegotiations`, `IsInPriceList`, `IsProtectedStar`, freeze/floor checks, and non-academy `AiAcademyAgeCompatible`) in zero-allocation native `INativeDetour` per-pass caches — invalidated immediately on any offer/deal/pricelist change — plus pointer-caches `Dormant.Is` and negative `LockedClub.Blocks` checks during `AITransfers`. **100% identical** transfer outcomes! |
 | **AI Identity Pool Cache** (`AiPoolCache`) | Reuses `iamgri mod`'s 88-bloc / ~6,320-player scan (`AiIdentity._pool`, 60–131 ms/day) across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
 | **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Takes a defensive thread-safe snapshot of `MatchesEngine.ProcessAIMatches` to prevent `InvalidOperationException: Collection was modified` when background day offloading and third-place decider mods run concurrently. |
 | **Log & Stack-Trace Throttler** (`LogThrottler`) | Filters verbose `Info`/`Debug` spam from `iamgri mod` and `Iamgri Better` out of the synchronous Windows console window, and disables native Unity stack-trace walking on `Debug.Log` / `Debug.LogWarning` (keeping `Error`/`Exception` traces 100% enabled) to eliminate `Player.log` freeze storms. |
@@ -37,7 +37,7 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 ## Installation
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v1.3.2.zip` from the [**Releases**](../../releases/latest) page.
+2. Download `EM2026PerfBoost-v1.3.3.zip` from the [**Releases**](../../releases/latest) page.
 3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), so you have:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
@@ -94,12 +94,13 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[UI]` | `DisableHiddenGraphicRaycasters` | `true` | Disable `GraphicRaycaster` on hidden `UiKit.Unseen` canvases |
 | `[Simulation]` | `CacheAiIdentityPools` | `true` | Cache `AiIdentity._pool` across quiet days with exact mutation invalidation |
 | `[Simulation]` | `AiPoolMaxCacheDays` | `3` | Maximum quiet in-game days before forcing a fresh rebuild |
-| `[Simulation]` | `PruneDormantFromAiTransfers` | `true` | Remove dormant/folded & locked clubs from `AITransfers` buckets before scanning all players |
+| `[Simulation]` | `PruneDormantFromAiTransfers` | `true` | Prune dormant/locked clubs and memoize hot pure lookups inside `AiAcquisitionPasses.AITransfers` |
 | `[Stability]` | `ThreadSafeAIMatches` | `true` | Thread-safe list snapshot for `MatchesEngine.ProcessAIMatches` |
 | `[Logging]` | `QuietConsoleInfo` | `true` | Filter verbose `Info`/`Debug` spam from the Windows console |
 | `[Logging]` | `QuietDiskInfo` | `false` | Also filter verbose `Info` spam from `LogOutput.log` on disk |
 | `[Logging]` | `StripUnityLogStackTraces` | `true` | Disable native Unity stack-trace walking on `Debug.Log`/`LogWarning` (keeps `Error`/`Exception` traces) |
-| `[Memory]` | `SmoothIncrementalGC` | `false` | Optional: cap Unity's incremental GC slice in UI scenes (off by default for maximum GC throughput on large multi-season saves) |
+| `[Memory]` | `SmoothIncrementalGC` | `true` | Cap Unity's incremental GC slice in UI scenes for smoother frame pacing (3D matches untouched) |
+| `[Memory]` | `IncrementalGcSliceMs` | `4` | Incremental GC time budget per frame in milliseconds (`4 ms` balances smooth UI with fast collection on large 2029+ saves) |
 | `[Diagnostics]` | `LogPeriodicSummary` | `true` | Log a telemetry summary every 5 minutes (and on `F9`) |
 
 ---

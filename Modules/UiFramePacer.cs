@@ -42,6 +42,18 @@ namespace EM2026PerfBoost.Modules
             ApplyGcSlice(in3DMatch);
         }
 
+        public static void RestoreVanilla()
+        {
+            if (!_capturedDefaultSlice || _defaultGcSliceNs == 0)
+                return;
+            try
+            {
+                if (GarbageCollector.isIncremental)
+                    GarbageCollector.incrementalTimeSliceNanoseconds = _defaultGcSliceNs;
+            }
+            catch { }
+        }
+
         public static void OnUiFrame()
         {
             double dtMs = Time.unscaledDeltaTime * 1000.0;

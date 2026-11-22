@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.3.2";
+        public const string PluginVersion = "1.3.3";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -58,7 +58,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<bool> CfgPeriodicTelemetry;
 
         private static bool _in3DMatchScene;
-        private static string _lastSceneName = "";
+        private static int _lastSceneHandle = int.MinValue;
         private static float _nextAutoReportTime;
 
         internal static bool In3DMatchScene => _in3DMatchScene;
@@ -131,7 +131,9 @@ namespace EM2026PerfBoost
         {
             try
             {
+                FastAiTransfers.Detach();
                 FpsUnlocker.RestoreVanilla();
+                UiFramePacer.RestoreVanilla();
                 CoreHarmony?.UnpatchSelf();
                 GameHarmony?.UnpatchSelf();
             }
@@ -218,7 +220,7 @@ namespace EM2026PerfBoost
 
             CfgFastAiTransfers = Config.Bind(
                 "Simulation", "PruneDormantFromAiTransfers", true,
-                "Removes dormant/folded and locked clubs from AiAcquisitionPasses.AITransfers buckets before its O(teams * players) candidate scan (100% identical transfers, massive day-advance speedup).");
+                "Accelerates AiAcquisitionPasses.AITransfers by pruning dormant/locked clubs and memoizing pure per-pass price/eligibility/offer lookups with zero gameplay change.");
 
             CfgQuietConsoleInfo = Config.Bind(
                 "Logging", "QuietConsoleInfo", true,
@@ -233,12 +235,12 @@ namespace EM2026PerfBoost
                 "Disables native stack-trace capture on Unity Debug.Log and Debug.LogWarning (keeps Error/Exception stack traces 100% enabled) to eliminate Player.log disk/CPU storms.");
 
             CfgSmoothIncrementalGc = Config.Bind(
-                "Memory", "SmoothIncrementalGC", false,
-                "Optional: caps Unity's incremental GC time slice in UI scenes. Off by default so massive multi-season saves (2029+) collect garbage at full speed.");
+                "Memory", "SmoothIncrementalGC", true,
+                "Caps Unity's incremental GC time slice in UI scenes for smoother frame pacing (never touches 3D match scenes).");
 
             CfgGcSliceMs = Config.Bind(
-                "Memory", "IncrementalGcSliceMs", 2,
-                new ConfigDescription("Incremental GC time budget per frame in milliseconds when SmoothIncrementalGC is enabled.",
+                "Memory", "IncrementalGcSliceMs", 4,
+                new ConfigDescription("Incremental GC time budget per frame in milliseconds when SmoothIncrementalGC is enabled (4 ms balances smooth UI pacing with fast collection on large 2029+ saves).",
                     new AcceptableValueRange<int>(1, 10)));
 
             CfgPeriodicTelemetry = Config.Bind(
@@ -266,7 +268,7 @@ namespace EM2026PerfBoost
                     DaySpeedBooster.AttachToCore(CoreHarmony, coreAsm);
 
                 if (CfgFastAiTransfers.Value)
-                    FastAiTransfers.AttachToCore(coreAsm);
+                    FastAiTransfers.AttachToCore(CoreHarmony, coreAsm);
 
                 Logger.LogMessage("Successfully attached to EMSkinCore.");
             }
@@ -280,12 +282,13 @@ namespace EM2026PerfBoost
         {
             try
             {
-                // Detect scene changes (keep 3D match scenes clean)
+                // Detect scene changes via integer handle (ZERO IL2CPP string allocations per frame!)
                 var activeScene = SceneManager.GetActiveScene();
-                string sceneName = activeScene.name ?? "";
-                if (!string.Equals(sceneName, _lastSceneName, StringComparison.Ordinal))
+                int sceneHandle = activeScene.handle;
+                if (sceneHandle != _lastSceneHandle)
                 {
-                    _lastSceneName = sceneName;
+                    _lastSceneHandle = sceneHandle;
+                    string sceneName = activeScene.name ?? "";
                     _in3DMatchScene = IsMatchSceneName(sceneName);
                     FpsUnlocker.OnSceneChanged(_in3DMatchScene);
                     DaySpeedBooster.OnSceneChanged(_in3DMatchScene);

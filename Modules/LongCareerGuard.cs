@@ -19,6 +19,7 @@ namespace EM2026PerfBoost.Modules
     {
         private static long _baselineHeapBytes;
         private static float _nextCheckTime;
+        private static float _nextSlotPollTime;
         private static float _lastCleanupTime = -999f;
         private static float _lastScreenSwitchTime;
         private static string _lastKnownSlot = "";
@@ -64,18 +65,24 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
-                // Detect slot changes even if set via native code bypassing managed setter
-                string currentSlot = SafeCurrentSlot();
-                if (!string.Equals(currentSlot, _lastKnownSlot, StringComparison.Ordinal))
+                float now = Time.unscaledTime;
+
+                // Fallback slot-change poll every 2.0s (avoids 165x/sec IL2CPP UTF-16 string allocations;
+                // SlotController.set_CurrentSlot postfix already catches managed slot changes instantly)
+                if (now >= _nextSlotPollTime)
                 {
-                    _lastKnownSlot = currentSlot;
-                    FlushAllCachesOnSlotChange(currentSlot);
+                    _nextSlotPollTime = now + 2.0f;
+                    string currentSlot = SafeCurrentSlot();
+                    if (!string.Equals(currentSlot, _lastKnownSlot, StringComparison.Ordinal))
+                    {
+                        _lastKnownSlot = currentSlot;
+                        FlushAllCachesOnSlotChange(currentSlot);
+                    }
                 }
 
                 if (!Plugin.CfgLongCareerMemoryGuard.Value || in3DMatch)
                     return;
 
-                float now = Time.unscaledTime;
                 if (now < _nextCheckTime)
                     return;
                 _nextCheckTime = now + 10f;
@@ -154,6 +161,7 @@ namespace EM2026PerfBoost.Modules
         {
             HiddenUiSkipper.ResetState();
             AiPoolCache.ResetState();
+            FastAiTransfers.ResetState();
             SmartAutosave.ResetState();
             DaySpeedBooster.ResetState();
             _baselineHeapBytes = ReadCurrentHeapBytes();

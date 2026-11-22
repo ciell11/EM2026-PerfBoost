@@ -11,7 +11,7 @@ namespace EM2026PerfBoost
     /// </summary>
     internal static class CoreBridge
     {
-        private static int _lastCheckFrame = -1;
+        private static float _nextPollTime;
         private static float _nextDiscoveryTime;
         private static FieldInfo _loaderTickField;
         private static Assembly _activeCore;
@@ -23,10 +23,10 @@ namespace EM2026PerfBoost
         public static bool Poll(out Assembly newCore)
         {
             newCore = null;
-            int frame = Time.frameCount;
-            if (frame == _lastCheckFrame)
+            float now = Time.unscaledTime;
+            if (_activeCore != null && now < _nextPollTime)
                 return false;
-            _lastCheckFrame = frame;
+            _nextPollTime = now + 1.0f;
 
             Assembly found = ResolveActiveCore();
             if (found != null && !ReferenceEquals(found, _activeCore))
