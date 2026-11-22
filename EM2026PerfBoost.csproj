@@ -3,7 +3,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>EM2026PerfBoost</AssemblyName>
     <Product>EM2026 PerfBoost</Product>
-    <Version>1.3.3</Version>
+    <Version>1.3.4</Version>
     <Description>Non-destructive performance and stability optimizer for Esports Manager 2026 (compatible with iamgri mod and Iamgri Better).</Description>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
@@ -35,10 +35,6 @@
     </Reference>
     <Reference Include="Il2CppInterop.Common">
       <HintPath>$(BepInExCore)\Il2CppInterop.Common.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="MonoMod.RuntimeDetour">
-      <HintPath>$(BepInExCore)\MonoMod.RuntimeDetour.dll</HintPath>
       <Private>false</Private>
     </Reference>
 

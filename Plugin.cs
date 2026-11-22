@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.3.3";
+        public const string PluginVersion = "1.3.4";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
