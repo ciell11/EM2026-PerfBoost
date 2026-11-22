@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.3.1";
+        public const string PluginVersion = "1.3.2";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -49,6 +49,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<bool> CfgDisableHiddenRaycasters;
         internal static ConfigEntry<bool> CfgAiPoolCache;
         internal static ConfigEntry<int> CfgAiPoolMaxCacheDays;
+        internal static ConfigEntry<bool> CfgFastAiTransfers;
         internal static ConfigEntry<bool> CfgQuietConsoleInfo;
         internal static ConfigEntry<bool> CfgQuietDiskInfo;
         internal static ConfigEntry<bool> CfgStripUnityLogStackTraces;
@@ -81,6 +82,10 @@ namespace EM2026PerfBoost
 
                 // 3. Faster inter-day transitions & real day-advance timing telemetry
                 DaySpeedBooster.InstallGamePatches(GameHarmony);
+
+                // 3b. Prune dormant/locked clubs from AITransfers buckets before O(teams * players) scan
+                if (CfgFastAiTransfers.Value)
+                    FastAiTransfers.InstallGamePatches(GameHarmony);
 
                 // 4. Bugfix: Thread-safe MatchesEngine.ProcessAIMatches snapshot
                 if (CfgMatchThreadSafety.Value)
@@ -211,6 +216,10 @@ namespace EM2026PerfBoost
                 new ConfigDescription("Maximum in-game days to reuse AiIdentity pool without a world mutation before forcing a fresh rebuild.",
                     new AcceptableValueRange<int>(1, 7)));
 
+            CfgFastAiTransfers = Config.Bind(
+                "Simulation", "PruneDormantFromAiTransfers", true,
+                "Removes dormant/folded and locked clubs from AiAcquisitionPasses.AITransfers buckets before its O(teams * players) candidate scan (100% identical transfers, massive day-advance speedup).");
+
             CfgQuietConsoleInfo = Config.Bind(
                 "Logging", "QuietConsoleInfo", true,
                 "Filters verbose Info/Debug spam from iamgri mod and Iamgri Better out of the synchronous Windows console window (Warnings/Errors/Messages always stay visible).");
@@ -255,6 +264,9 @@ namespace EM2026PerfBoost
 
                 if (CfgFastDayTransitions.Value)
                     DaySpeedBooster.AttachToCore(CoreHarmony, coreAsm);
+
+                if (CfgFastAiTransfers.Value)
+                    FastAiTransfers.AttachToCore(coreAsm);
 
                 Logger.LogMessage("Successfully attached to EMSkinCore.");
             }

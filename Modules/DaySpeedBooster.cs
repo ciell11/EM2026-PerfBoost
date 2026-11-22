@@ -27,9 +27,15 @@ namespace EM2026PerfBoost.Modules
                 if (beginDay != null)
                     harmony.Patch(beginDay, prefix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(BeginDay_Prefix)));
 
-                var announce = AccessTools.Method(typeof(CalendarController), nameof(CalendarController.AnnounceOutcome));
-                if (announce != null)
-                    harmony.Patch(announce, postfix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(DayEnd_Postfix)));
+                var reportDay = AccessTools.Method(typeof(CalendarController), nameof(CalendarController.ReportDayMeasurement));
+                if (reportDay != null)
+                    harmony.Patch(reportDay, postfix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(DayEnd_Postfix)));
+                else
+                {
+                    var announce = AccessTools.Method(typeof(CalendarController), nameof(CalendarController.AnnounceOutcome));
+                    if (announce != null)
+                        harmony.Patch(announce, postfix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(DayEnd_Postfix)));
+                }
 
                 // Standalone fallback if iamgri mod's DayPace is not present
                 var checkEvents = AccessTools.Method(typeof(CalendarController), nameof(CalendarController.CheckForEvents));

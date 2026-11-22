@@ -20,8 +20,24 @@ namespace EM2026PerfBoost
         public static long BasecampHiddenSkipped;
         public static long RaycastersDisabled;
 
-        public static long[] SubPassMs = new long[4];
-        public static long[] SubPassCalls = new long[4];
+        public static long[] SubPassMs = new long[5];
+        public static long[] SubPassCalls = new long[5];
+
+        public static long BucketsPrunedTotal;
+        public static int LastPrioBefore;
+        public static int LastPrioAfter;
+        public static int LastOtherBefore;
+        public static int LastOtherAfter;
+
+        public static void RecordBucketPrune(int prioBefore, int prioAfter, int otherBefore, int otherAfter, int pruned)
+        {
+            LastPrioBefore = prioBefore;
+            LastPrioAfter = prioAfter;
+            LastOtherBefore = otherBefore;
+            LastOtherAfter = otherAfter;
+            if (pruned > 0)
+                Interlocked.Add(ref BucketsPrunedTotal, pruned);
+        }
 
         public static void AddSubPass(int idx, long ms)
         {
@@ -118,7 +134,8 @@ namespace EM2026PerfBoost
             long days = Interlocked.Read(ref DaysAdvanced);
             double dayAvg = days > 0 ? (double)Interlocked.Read(ref DaysTotalMs) / days : 0;
             sb.AppendLine(string.Format(inv, "[Days] Advanced: {0}, avg {1:0.0} ms, max {2} ms | Pauses accelerated: {3}", days, dayAvg, Interlocked.Read(ref DaysMaxMs), Interlocked.Read(ref DayPausesAccelerated)));
-            sb.AppendLine($"[ContractEngine] DailyAi: {Interlocked.Read(ref SubPassMs[0])}ms ({Interlocked.Read(ref SubPassCalls[0])}x) | Maint: {Interlocked.Read(ref SubPassMs[1])}ms ({Interlocked.Read(ref SubPassCalls[1])}x) | AITransfers: {Interlocked.Read(ref SubPassMs[2])}ms ({Interlocked.Read(ref SubPassCalls[2])}x) | Listed: {Interlocked.Read(ref SubPassMs[3])}ms ({Interlocked.Read(ref SubPassCalls[3])}x)");
+            sb.AppendLine($"[ContractEngine] DailyAi: {Interlocked.Read(ref SubPassMs[0])}ms ({Interlocked.Read(ref SubPassCalls[0])}x) | Maint: {Interlocked.Read(ref SubPassMs[1])}ms ({Interlocked.Read(ref SubPassCalls[1])}x) | AITransfers: {Interlocked.Read(ref SubPassMs[2])}ms ({Interlocked.Read(ref SubPassCalls[2])}x) | Listed: {Interlocked.Read(ref SubPassMs[3])}ms ({Interlocked.Read(ref SubPassCalls[3])}x) | Pool: {Interlocked.Read(ref SubPassMs[4])}ms ({Interlocked.Read(ref SubPassCalls[4])}x)");
+            sb.AppendLine($"[FastAiTransfers] Pruned dormant/locked clubs: {Interlocked.Read(ref BucketsPrunedTotal)} (last day: prio {LastPrioBefore}->{LastPrioAfter}, other {LastOtherBefore}->{LastOtherAfter})");
 
             sb.AppendLine($"[FPS] Target: {Plugin.CfgTargetFps.Value} (VSyncOff={Plugin.CfgDisableVSync.Value}), enforcements: {Interlocked.Read(ref FpsEnforcements)}");
             sb.AppendLine($"[LongCareer] Idle cleanups: {Interlocked.Read(ref MemoryCleanups)} (freed {Interlocked.Read(ref MemoryFreedMbTotal)} MB, last heap {Interlocked.Read(ref MemoryLastHeapMb)} MB) | Slot cache flushes: {Interlocked.Read(ref SlotCacheFlushes)}");
