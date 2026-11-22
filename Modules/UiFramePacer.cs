@@ -94,6 +94,7 @@ namespace EM2026PerfBoost.Modules
             long ms = elapsedTicks * 1000L / Stopwatch.Frequency;
             string name = __0 != null ? __0.GetType().Name : "?";
             PerfTelemetry.RecordSwitch(name, ms);
+            LongCareerGuard.NotifyScreenSwitched();
         }
     }
 }

@@ -36,6 +36,23 @@ namespace EM2026PerfBoost.Modules
         private static IntPtr _initializedTransfersPtr = IntPtr.Zero;
         private static string _initializedTransfersSlot = "";
 
+        public static void ResetState()
+        {
+            _lastInboxWindowPtr = IntPtr.Zero;
+            _lastInboxFingerprint = -1;
+            _lastInboxSlot = "";
+            _lastInboxDateKey = -1;
+
+            _lastTalkWindowPtr = IntPtr.Zero;
+            _lastTalkFingerprint = -1;
+            _lastTalkSlot = "";
+            _lastTalkDateKey = -1;
+
+            _initializedTransfersPtr = IntPtr.Zero;
+            _initializedTransfersSlot = "";
+            Interlocked.Increment(ref _emailMutationVersion);
+        }
+
         public static void InstallGamePatches(Harmony harmony)
         {
             PatchEmailMutations(harmony);

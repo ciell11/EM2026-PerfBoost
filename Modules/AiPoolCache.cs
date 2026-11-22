@@ -68,6 +68,8 @@ namespace EM2026PerfBoost.Modules
             }
         }
 
+        public static void ResetState() => ResetCache();
+
         private static void ResetCache()
         {
             _cachedSlot = "";

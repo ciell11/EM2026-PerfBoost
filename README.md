@@ -1,24 +1,26 @@
 # EM2026 PerfBoost
 
-A lightweight, non-destructive performance and stability optimizer for **Esports Manager 2026** (EM2026 ModKit / BepInEx 6 IL2CPP), designed for full compatibility with **iamgri mod** and **Iamgri Better**.
+A lightweight, non-destructive performance, FPS, and long-career stability optimizer for **Esports Manager 2026** (EM2026 ModKit / BepInEx 6 IL2CPP), designed for full compatibility with **iamgri mod** and **Iamgri Better**.
 
 - **Zero gameplay features cut** — all tournaments, simulation models, UI screens, and realism systems stay intact.
 - **Zero save format changes** — 100% safe to add or remove mid-career.
-- **3D matches untouched** — automatically stays passive during 3D match scenes.
-- **Fully configurable** — every optimization can be toggled individually in `BepInEx\config\local.em2026.perfboost.cfg`.
+- **3D matches untouched by default** — automatically stays passive during 3D match scenes (optional FPS unlock in 3D matches can be enabled in config).
+- **Fully configurable** — every optimization can be tuned or toggled individually in `BepInEx\config\local.em2026.perfboost.cfg`.
 
 ---
 
 ## What It Optimizes
 
-| Module | Problem Solved | Optimization |
-|---|---|---|
-| **Smart After-Match Autosave** (`SmartAutosave`) | `IamgriBetter.MatchCheckpoint` overrides `iamgri mod`'s `AutosaveEveryDays` skip and triggers a full 3–4s save after every quick match (locking `Continue`). | Coalesces redundant back-to-back after-match saves within a configurable interval (default `180s`). **Never** skips periodic `AutosaveEveryDays` saves, manual saves, or exit-to-menu saves. |
-| **Hidden Vanilla UI Skipper** (`HiddenUiSkipper`) | Even when `iamgri mod` replaces screens, the hidden vanilla windows underneath still rebuild UI rows and recalculate Unity layouts on every tab switch. | Exact dirty-check memoization for `InboxWindow.Renew` and `TalkWindow.Renew`; skips hidden `SquadWindow`, `SquadStaffWindow`, `TransfersWindow`, `ShopWindow_v2`, and `Basecamp_v2` rebuilds once `iamgri` pages are built; disables `GraphicRaycaster`, `LayoutGroup`, and `ContentSizeFitter` on hidden `UiKit.Unseen` canvases. |
-| **AI Identity Pool Cache** (`AiPoolCache`) | `iamgri mod` rescans all ~6,320 players across 88 national blocs every in-game day (`60–131 ms/day`). | Reuses `AiIdentity._pool` across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
-| **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Concurrent `EMSkinCore.DayOffload` (background thread) + `IamgriThirdPlace` (main thread) can throw `InvalidOperationException: Collection was modified` inside `MatchesEngine.ProcessAIMatches`. | Takes a defensive thread-safe snapshot of the match list before `ProcessAIMatches` iterates it. |
-| **Console Log Throttler** (`LogThrottler`) | Thousands of verbose `Info`/`Debug` lines from `iamgri mod` and `Iamgri Better` stall the synchronous Windows console window during day ticks. | Filters verbose `Info`/`Debug` spam out of the console window while keeping all `Warning`/`Error`/`Fatal` logs and leaving `LogOutput.log` on disk 100% intact by default. |
-| **UI Frame & GC Pacer** (`UiFramePacer`) | Large GC spikes cause UI hitches when navigating menus. | Sets a smooth `2 ms` incremental GC slice in UI/manager scenes and restores the game's default GC slice during 3D matches. |
+| Module | What It Does |
+|---|---|
+| **FPS Unlocker** (`FpsUnlocker`) | Unlocks UI frame rate to **`165 FPS`** by default (configurable in `.cfg`, `0` = vanilla, `-1` = uncapped) with VSync toggle. Makes menus/scrolling noticeably smoother **and** accelerates Unity coroutine `yield return null` steps during day advancement (`CalendarController.NextDayLoop` / `StartEventsSequentially`). |
+| **Faster Day Transitions** (`DaySpeedBooster`) | Accelerates the dead inter-day pause (`60x` default vs `20x`, strictly outside 3D matches and automatically restored before the next day starts) and tracks real day-advance timings in `F9` telemetry. |
+| **Long-Career Memory & Stability Guard** (`LongCareerGuard`) | Protects multi-season careers (2028–2035+) from 5–6+ GB heap bloat and sudden 2.5s GC stalls by running gentle cleanups **only while idle in menus** (never during 3D matches, day simulation, or saves). Also flushes all internal caches cleanly on career/slot switches so stale pointers never persist. |
+| **Smart After-Match Autosave** (`SmartAutosave`) | When another mod enables saving after every match, coalesces redundant back-to-back 3–4s full saves within a configurable interval (default `180s`). **Never** skips periodic `AutosaveEveryDays` saves, manual saves, or exit-to-menu saves. |
+| **Hidden Vanilla UI Skipper** (`HiddenUiSkipper`) | Exact dirty-check memoization for `InboxWindow.Renew` and `TalkWindow.Renew`; skips hidden `SquadWindow`, `SquadStaffWindow`, `TransfersWindow`, `ShopWindow_v2`, and `Basecamp_v2` rebuilds once `iamgri mod` pages are built; disables `GraphicRaycaster`, `LayoutGroup`, and `ContentSizeFitter` on hidden `UiKit.Unseen` canvases. |
+| **AI Identity Pool Cache** (`AiPoolCache`) | Reuses `iamgri mod`'s 88-bloc / ~6,320-player scan (`AiIdentity._pool`, 60–131 ms/day) across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
+| **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Takes a defensive thread-safe snapshot of `MatchesEngine.ProcessAIMatches` to prevent `InvalidOperationException: Collection was modified` when background day offloading and third-place decider mods run concurrently. |
+| **Console Log Throttler** (`LogThrottler`) | Filters verbose `Info`/`Debug` spam from `iamgri mod` and `Iamgri Better` out of the synchronous Windows console window while preserving all `Warning`/`Error`/`Fatal` logs and keeping full `LogOutput.log` on disk by default. |
 
 ---
 
@@ -34,12 +36,12 @@ A lightweight, non-destructive performance and stability optimizer for **Esports
 ## Installation
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v1.2.0.zip` from the [**Releases**](../../releases/latest) page.
-3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), so you end up with:
+2. Download `EM2026PerfBoost-v1.3.0.zip` from the [**Releases**](../../releases/latest) page.
+3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), so you have:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
    ```
-4. Launch the game from Steam. The configuration file will be created automatically on first launch at:
+4. Launch the game from Steam. The config file is generated automatically on first launch at:
    ```text
    BepInEx\config\local.em2026.perfboost.cfg
    ```
@@ -48,17 +50,22 @@ A lightweight, non-destructive performance and stability optimizer for **Esports
 
 ## Live Telemetry (`F9`)
 
-Press **`F9`** at any time in-game to print a live performance report to the console and `BepInEx\LogOutput.log`:
+Press **`F9`** at any time in-game to print a live performance summary to the BepInEx console and `BepInEx\LogOutput.log`.
+
+*(Example output):*
 
 ```text
 ========== EM2026 PerfBoost Telemetry ==========
-[Screens] Window Show: 8 calls, avg 11.9 ms, max 21 ms (Windows)
-[UI FPS] 5449 frames, avg 55.4 FPS (18.1 ms), worst 42.3 ms, >50ms spikes: 0
-[Autosave] Coalesced after-match saves: 6 (est. ~19.2s saved), allowed: 3
-[Hidden UI] Inbox 4/5 | Talk 2/3 | Squad 3 | Staff 2 | Transfers 2 | Shop 1 | Basecamp 1 | Raycasters 4 | Layouts 220
+[Screens] Window Show: 20 calls, avg 12.6 ms, max 27 ms (Windows)
+[UI FPS] 18420 frames, avg 161.4 FPS (6.2 ms), worst 41.8 ms, >50ms spikes: 0
+[Autosave] Coalesced after-match saves: 4 (est. ~12.8s saved), allowed: 2
+[Hidden UI] Inbox 5/7 | Talk 2/3 | Squad 4 | Staff 3 | Transfers 2 | Shop 1 | Basecamp 1 | Raycasters 4 | Layouts 357
 [AiIdentity.Pool] Cache hits: 14, rebuilds: 5
+[Days] Advanced: 30, avg 142.5 ms, max 410 ms | Pauses accelerated: 29
+[FPS] Target: 165 (VSyncOff=True), enforcements: 2
+[LongCareer] Idle cleanups: 1 (freed 612 MB, last heap 1480 MB) | Slot cache flushes: 1
 [Stability] ProcessAIMatches safe snapshots: 12 (concurrent retries: 0)
-[Logging] Console spam filtered: 1240, Disk filtered: 0
+[Logging] Console spam filtered: 1210, Disk filtered: 0
 ================================================
 ```
 
@@ -70,6 +77,16 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 
 | Section | Key | Default | Description |
 |---|---|---|---|
+| `[FPS]` | `EnableFpsUnlock` | `true` | Enable FPS unlock in UI/manager scenes |
+| `[FPS]` | `TargetFps` | `165` | Target FPS cap (`0` = vanilla, `-1` = uncapped, `30–1000` = custom cap) |
+| `[FPS]` | `DisableVSync` | `true` | Disable VSync (`vSyncCount = 0`) when FPS unlock is active |
+| `[FPS]` | `ApplyIn3DMatch` | `false` | Also apply `TargetFps` / `DisableVSync` inside 3D match scenes |
+| `[DaySpeed]` | `FastDayTransitions` | `true` | Accelerate inter-day transition pauses |
+| `[DaySpeed]` | `DayPauseSpeed` | `60` | Time scale during inter-day pause (`1–100`, never affects 3D matches) |
+| `[LongCareer]` | `EnableMemoryGuard` | `true` | Proactive idle memory cleanup for multi-season (2028+) saves |
+| `[LongCareer]` | `GrowthThresholdMb` | `1024` | Heap growth (MB) above baseline before an idle cleanup triggers |
+| `[LongCareer]` | `CleanupCooldownSeconds` | `180` | Minimum real seconds between idle memory cleanups |
+| `[LongCareer]` | `UnloadUnusedAssetsThresholdMb` | `2560` | Total Unity allocated MB threshold to also call async `UnloadUnusedAssets()` |
 | `[Autosave]` | `CoalesceAfterMatchSaves` | `true` | Coalesce redundant back-to-back after-match saves |
 | `[Autosave]` | `MinSecondsBetweenMatchSaves` | `180` | Minimum real seconds between automatic after-match saves (`0` = rely purely on `AutosaveEveryDays`) |
 | `[UI]` | `SkipHiddenVanillaUiRebuilds` | `true` | Skip redundant hidden vanilla UI rebuilds underneath `iamgri mod` |
@@ -79,9 +96,15 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[Stability]` | `ThreadSafeAIMatches` | `true` | Thread-safe list snapshot for `MatchesEngine.ProcessAIMatches` |
 | `[Logging]` | `QuietConsoleInfo` | `true` | Filter verbose `Info`/`Debug` spam from the Windows console |
 | `[Logging]` | `QuietDiskInfo` | `false` | Also filter verbose `Info` spam from `LogOutput.log` on disk |
-| `[Memory]` | `SmoothIncrementalGC` | `true` | Smooth incremental GC time slice in UI scenes (untouched in 3D matches) |
-| `[Memory]` | `IncrementalGcSliceMs` | `2` | Incremental GC time budget per frame in milliseconds (`1–10`) |
+| `[Memory]` | `SmoothIncrementalGC` | `false` | Optional: cap Unity's incremental GC slice in UI scenes (off by default for maximum GC throughput on large multi-season saves) |
 | `[Diagnostics]` | `LogPeriodicSummary` | `true` | Log a telemetry summary every 5 minutes (and on `F9`) |
+
+---
+
+## Troubleshooting
+
+- **Windows 11 error `0x800711C7` (`Application Control policy blocked Il2Cppmscorlib`):**
+  This comes from Windows 11 **Smart App Control** blocking BepInEx's locally generated `BepInEx\interop\*.dll` files before any plugins load. Right-click the downloaded `.zip` → **Properties** → check **Unblock** before extracting, add the game folder to Windows Defender exclusions, and verify Smart App Control settings in Windows Security.
 
 ---
 
@@ -97,6 +120,12 @@ dotnet build EM2026PerfBoost.csproj -c Release -p:GameDir="D:\SteamLibrary\steam
 ```
 
 ---
+
+## Credits
+
+- **EM2026 ModKit** (BepInEx 6 port for Unity 6000.5 / IL2CPP v107) — NeverFall & Xleb1g
+- **iamgri mod** — Gri
+- **Iamgri Better** — community addon authors
 
 ## License
 

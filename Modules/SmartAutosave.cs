@@ -21,10 +21,34 @@ namespace EM2026PerfBoost.Modules
         private static FieldInfo _fOnSaveThread;
         private static FieldInfo _fEveryDays;
         private static FieldInfo _fDue;
+        private static FieldInfo _fRunning;
 
         private static long _lastSaveTicksUtc;
         private static int _lastSaveGameDayKey = -1;
         private static string _lastSaveSlot = "";
+
+        public static bool IsSavingNow
+        {
+            get
+            {
+                try
+                {
+                    if (_fRunning != null && _fRunning.GetValue(null) is bool r && r)
+                        return true;
+                    if (_fDue != null && _fDue.GetValue(null) is bool d && d)
+                        return true;
+                }
+                catch { }
+                return false;
+            }
+        }
+
+        public static void ResetState()
+        {
+            Interlocked.Exchange(ref _lastSaveTicksUtc, 0);
+            _lastSaveGameDayKey = -1;
+            _lastSaveSlot = "";
+        }
 
         public static void AttachToCore(Harmony coreHarmony, Assembly coreAsm)
         {
@@ -43,6 +67,7 @@ namespace EM2026PerfBoost.Modules
                 _fOnSaveThread = autosaveType.GetField("_onSaveThread", flags);
                 _fEveryDays = autosaveType.GetField("EveryDays", flags);
                 _fDue = autosaveType.GetField("_due", flags);
+                _fRunning = autosaveType.GetField("_running", flags);
 
                 var savePre = autosaveType.GetMethod("SavePre", flags);
                 if (savePre == null)

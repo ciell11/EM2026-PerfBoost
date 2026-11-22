@@ -19,13 +19,29 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.2.0";
+        public const string PluginVersion = "1.3.0";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
         internal static Harmony CoreHarmony;
 
-        // Config entries
+        // Config entries: FPS
+        internal static ConfigEntry<bool> CfgEnableFpsUnlock;
+        internal static ConfigEntry<int> CfgTargetFps;
+        internal static ConfigEntry<bool> CfgDisableVSync;
+        internal static ConfigEntry<bool> CfgApplyFpsIn3DMatch;
+
+        // Config entries: Day speed
+        internal static ConfigEntry<bool> CfgFastDayTransitions;
+        internal static ConfigEntry<float> CfgDayPauseSpeed;
+
+        // Config entries: Long-career stability & memory guard
+        internal static ConfigEntry<bool> CfgLongCareerMemoryGuard;
+        internal static ConfigEntry<int> CfgMemoryGuardGrowthMb;
+        internal static ConfigEntry<int> CfgMemoryGuardCooldownSec;
+        internal static ConfigEntry<int> CfgUnloadAssetsThresholdMb;
+
+        // Config entries: Existing modules
         internal static ConfigEntry<bool> CfgMatchThreadSafety;
         internal static ConfigEntry<bool> CfgSmartAutosave;
         internal static ConfigEntry<int> CfgMinSecondsBetweenMatchSaves;
@@ -58,18 +74,28 @@ namespace EM2026PerfBoost
                 // 1. Logging throttle (apply early so startup/runtime console spam stops immediately)
                 LogThrottler.Install(GameHarmony);
 
-                // 2. Bugfix: Thread-safe MatchesEngine.ProcessAIMatches snapshot
+                // 2. FPS unlocker (default 165 FPS, also speeds up Unity coroutine day yields)
+                if (CfgEnableFpsUnlock.Value)
+                    FpsUnlocker.Install(GameHarmony);
+
+                // 3. Faster inter-day transitions & real day-advance timing telemetry
+                DaySpeedBooster.InstallGamePatches(GameHarmony);
+
+                // 4. Bugfix: Thread-safe MatchesEngine.ProcessAIMatches snapshot
                 if (CfgMatchThreadSafety.Value)
                     MatchThreadSafety.Install(GameHarmony);
 
-                // 3. Hidden vanilla UI skipper & dirty-check memoization
+                // 5. Hidden vanilla UI skipper & dirty-check memoization
                 if (CfgSkipHiddenVanillaUi.Value)
                     HiddenUiSkipper.InstallGamePatches(GameHarmony);
 
-                // 4. UI Frame pacer & SwitchWindows telemetry (strictly non-3D match)
+                // 6. Long-career memory guard & clean slot-switch cache flushing
+                LongCareerGuard.Install(GameHarmony);
+
+                // 7. UI frame telemetry & optional incremental GC slice pacer
                 UiFramePacer.Install(GameHarmony);
 
-                // 5. Frame tick hook on EventSystem.Update (same proven hook as EMSkin & IamgriBetter)
+                // 8. Frame tick hook on EventSystem.Update (same proven hook as EMSkin & IamgriBetter)
                 var esUpdate = AccessTools.Method(typeof(EventSystem), nameof(EventSystem.Update));
                 if (esUpdate != null)
                 {
@@ -99,6 +125,7 @@ namespace EM2026PerfBoost
         {
             try
             {
+                FpsUnlocker.RestoreVanilla();
                 CoreHarmony?.UnpatchSelf();
                 GameHarmony?.UnpatchSelf();
             }
@@ -108,9 +135,54 @@ namespace EM2026PerfBoost
 
         private void BindConfig()
         {
+            CfgEnableFpsUnlock = Config.Bind(
+                "FPS", "EnableFpsUnlock", true,
+                "Unlocks the frame rate cap in UI/manager scenes for smoother scrolling and faster coroutine day advancement.");
+
+            CfgTargetFps = Config.Bind(
+                "FPS", "TargetFps", 165,
+                new ConfigDescription("Target FPS cap (0 = leave vanilla untouched, -1 = uncapped, 30-1000 = custom cap). Default: 165.",
+                    new AcceptableValueRange<int>(-1, 1000)));
+
+            CfgDisableVSync = Config.Bind(
+                "FPS", "DisableVSync", true,
+                "Sets QualitySettings.vSyncCount = 0 when FPS unlock is active so TargetFps takes effect.");
+
+            CfgApplyFpsIn3DMatch = Config.Bind(
+                "FPS", "ApplyIn3DMatch", false,
+                "Also apply TargetFps / DisableVSync inside 3D match scenes. Leave false to keep your in-game 3D match settings untouched.");
+
+            CfgFastDayTransitions = Config.Bind(
+                "DaySpeed", "FastDayTransitions", true,
+                "Accelerates the dead pause between simulated days (never touches 3D match speed or gameplay logic).");
+
+            CfgDayPauseSpeed = Config.Bind(
+                "DaySpeed", "DayPauseSpeed", 60f,
+                new ConfigDescription("Time scale applied strictly during the inter-day pause (iamgri default is 20x; 60x cuts dead wait without affecting simulations).",
+                    new AcceptableValueRange<float>(1f, 100f)));
+
+            CfgLongCareerMemoryGuard = Config.Bind(
+                "LongCareer", "EnableMemoryGuard", true,
+                "Protects multi-season careers (2028+) from 6+ GB heap bloat and sudden 2.5s GC freezes by running gentle cleanups only while idle in menus.");
+
+            CfgMemoryGuardGrowthMb = Config.Bind(
+                "LongCareer", "GrowthThresholdMb", 1024,
+                new ConfigDescription("Heap growth (in MB) above baseline before an idle cleanup is allowed.",
+                    new AcceptableValueRange<int>(256, 4096)));
+
+            CfgMemoryGuardCooldownSec = Config.Bind(
+                "LongCareer", "CleanupCooldownSeconds", 180,
+                new ConfigDescription("Minimum real seconds between automatic idle memory cleanups.",
+                    new AcceptableValueRange<int>(60, 1800)));
+
+            CfgUnloadAssetsThresholdMb = Config.Bind(
+                "LongCareer", "UnloadUnusedAssetsThresholdMb", 2560,
+                new ConfigDescription("If total Unity allocated memory exceeds this threshold (MB) during an idle cleanup, also call async Resources.UnloadUnusedAssets().",
+                    new AcceptableValueRange<int>(1024, 8192)));
+
             CfgMatchThreadSafety = Config.Bind(
                 "Stability", "ThreadSafeAIMatches", true,
-                "Snapshots MatchesEngine.ProcessAIMatches list to prevent 'Collection was modified' exceptions when DayOffload + IamgriThirdPlace run concurrently.");
+                "Snapshots MatchesEngine.ProcessAIMatches list to prevent 'Collection was modified' exceptions when DayOffload and third-place decider mods run concurrently.");
 
             CfgSmartAutosave = Config.Bind(
                 "Autosave", "CoalesceAfterMatchSaves", true,
@@ -123,11 +195,11 @@ namespace EM2026PerfBoost
 
             CfgSkipHiddenVanillaUi = Config.Bind(
                 "UI", "SkipHiddenVanillaUiRebuilds", true,
-                "Skips redundant hidden vanilla window rebuilds (Transfers/Shop/Basecamp once iamgri pages are built, and unchanged Inbox/Talk windows) while keeping all data 100% live.");
+                "Skips redundant hidden vanilla window rebuilds (Squad/Staff/Transfers/Shop/Basecamp once iamgri pages are built, and unchanged Inbox/Talk windows) while keeping all data 100% live.");
 
             CfgDisableHiddenRaycasters = Config.Bind(
                 "UI", "DisableHiddenGraphicRaycasters", true,
-                "Disables GraphicRaycaster components on vanilla canvases hidden by iamgri mod (UiKit.Unseen) to avoid wasted pointer raycasts.");
+                "Disables GraphicRaycaster, LayoutGroup, and ContentSizeFitter on vanilla canvases hidden by iamgri mod (UiKit.Unseen) to avoid wasted raycasts and layout rebuilds.");
 
             CfgAiPoolCache = Config.Bind(
                 "Simulation", "CacheAiIdentityPools", true,
@@ -147,12 +219,12 @@ namespace EM2026PerfBoost
                 "Also filters verbose Info spam from LogOutput.log on disk. Keep false if you need full logs for bug reports.");
 
             CfgSmoothIncrementalGc = Config.Bind(
-                "Memory", "SmoothIncrementalGC", true,
-                "Sets a smooth incremental GC time slice in UI/manager scenes (never touches 3D match scenes) to prevent frame hitches.");
+                "Memory", "SmoothIncrementalGC", false,
+                "Optional: caps Unity's incremental GC time slice in UI scenes. Off by default so massive multi-season saves (2029+) collect garbage at full speed.");
 
             CfgGcSliceMs = Config.Bind(
                 "Memory", "IncrementalGcSliceMs", 2,
-                new ConfigDescription("Incremental GC time budget per frame in milliseconds during UI scenes.",
+                new ConfigDescription("Incremental GC time budget per frame in milliseconds when SmoothIncrementalGC is enabled.",
                     new AcceptableValueRange<int>(1, 10)));
 
             CfgPeriodicTelemetry = Config.Bind(
@@ -176,6 +248,9 @@ namespace EM2026PerfBoost
                 if (CfgDisableHiddenRaycasters.Value)
                     HiddenUiSkipper.AttachToCore(CoreHarmony, coreAsm);
 
+                if (CfgFastDayTransitions.Value)
+                    DaySpeedBooster.AttachToCore(CoreHarmony, coreAsm);
+
                 Logger.LogMessage("Successfully attached to EMSkinCore.");
             }
             catch (Exception ex)
@@ -188,13 +263,16 @@ namespace EM2026PerfBoost
         {
             try
             {
-                // Detect scene changes (stay passive during 3D match scenes)
+                // Detect scene changes (keep 3D match scenes clean)
                 var activeScene = SceneManager.GetActiveScene();
                 string sceneName = activeScene.name ?? "";
                 if (!string.Equals(sceneName, _lastSceneName, StringComparison.Ordinal))
                 {
                     _lastSceneName = sceneName;
                     _in3DMatchScene = IsMatchSceneName(sceneName);
+                    FpsUnlocker.OnSceneChanged(_in3DMatchScene);
+                    DaySpeedBooster.OnSceneChanged(_in3DMatchScene);
+                    LongCareerGuard.OnSceneChanged(_in3DMatchScene);
                     UiFramePacer.OnSceneChanged(_in3DMatchScene);
                 }
 
@@ -204,7 +282,11 @@ namespace EM2026PerfBoost
                     AttachToCore(newCore);
                 }
 
-                // UI frame timing & GC pacer (never runs inside 3D matches)
+                // Periodic lightweight enforcement & idle memory guard
+                FpsUnlocker.Tick(_in3DMatchScene);
+                LongCareerGuard.Tick(_in3DMatchScene);
+
+                // UI frame timing (never runs inside 3D matches)
                 if (!_in3DMatchScene)
                 {
                     UiFramePacer.OnUiFrame();
