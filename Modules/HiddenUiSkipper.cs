@@ -247,12 +247,12 @@ namespace EM2026PerfBoost.Modules
                     return true;
 
                 string slot = SlotController.CurrentSlot ?? "";
-                int dateKey = CurrentDateKey();
                 long fp = ComputeInboxFingerprint(__instance);
 
+                // Skip hidden vanilla Inbox rebuild whenever emails, read flags, page & sort are 100% unchanged
+                // (even if the calendar date ticked with zero new/modified emails!)
                 if (__instance.Pointer == _lastInboxWindowPtr
                     && fp == _lastInboxFingerprint
-                    && dateKey == _lastInboxDateKey
                     && string.Equals(slot, _lastInboxSlot, StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref PerfTelemetry.InboxRenewsSkipped);
@@ -322,12 +322,10 @@ namespace EM2026PerfBoost.Modules
                     return true;
 
                 string slot = SlotController.CurrentSlot ?? "";
-                int dateKey = CurrentDateKey();
                 long fp = ComputeTalkFingerprint();
 
                 if (__instance.Pointer == _lastTalkWindowPtr
                     && fp == _lastTalkFingerprint
-                    && dateKey == _lastTalkDateKey
                     && string.Equals(slot, _lastTalkSlot, StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref PerfTelemetry.TalkRenewsSkipped);

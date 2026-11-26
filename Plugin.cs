@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "0.7.0";
+        public const string PluginVersion = "0.8.0";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -170,28 +170,28 @@ namespace EM2026PerfBoost
                 "Accelerates the dead pause between simulated days (never touches 3D match speed or gameplay logic).");
 
             CfgDayPauseSpeed = Config.Bind(
-                "DaySpeed", "DayPauseSpeed", 60f,
-                new ConfigDescription("Time scale applied strictly during the inter-day pause (iamgri default is 20x; 60x cuts dead wait without affecting simulations).",
-                    new AcceptableValueRange<float>(1f, 100f)));
+                "DaySpeed", "DayPauseSpeed", 100f,
+                new ConfigDescription("Time scale applied strictly during the inter-day pause (iamgri default is 20x; 100x cuts dead wait without affecting simulations).",
+                    new AcceptableValueRange<float>(1f, 200f)));
 
             CfgLongCareerMemoryGuard = Config.Bind(
                 "LongCareer", "EnableMemoryGuard", true,
-                "Protects multi-season careers (2028+) from 6+ GB heap bloat and sudden 2.5s GC freezes by running gentle cleanups only while idle in menus.");
+                "Protects careers from multi-GB RAM bloat and sudden GC freezes by running gentle idle trims in menus (never during matches, day ticks, or saves).");
 
             CfgMemoryGuardGrowthMb = Config.Bind(
-                "LongCareer", "GrowthThresholdMb", 1024,
-                new ConfigDescription("Heap growth (in MB) above baseline before an idle cleanup is allowed.",
-                    new AcceptableValueRange<int>(256, 4096)));
+                "LongCareer", "GrowthThresholdMb", 384,
+                new ConfigDescription("Heap growth (in MB) above baseline before a gentle idle trim is allowed.",
+                    new AcceptableValueRange<int>(128, 4096)));
 
             CfgMemoryGuardCooldownSec = Config.Bind(
-                "LongCareer", "CleanupCooldownSeconds", 180,
+                "LongCareer", "CleanupCooldownSeconds", 75,
                 new ConfigDescription("Minimum real seconds between automatic idle memory cleanups.",
-                    new AcceptableValueRange<int>(60, 1800)));
+                    new AcceptableValueRange<int>(30, 1800)));
 
             CfgUnloadAssetsThresholdMb = Config.Bind(
-                "LongCareer", "UnloadUnusedAssetsThresholdMb", 2560,
+                "LongCareer", "UnloadUnusedAssetsThresholdMb", 1400,
                 new ConfigDescription("If total Unity allocated memory exceeds this threshold (MB) during an idle cleanup, also call async Resources.UnloadUnusedAssets().",
-                    new AcceptableValueRange<int>(1024, 8192)));
+                    new AcceptableValueRange<int>(768, 8192)));
 
             CfgMatchThreadSafety = Config.Bind(
                 "Stability", "ThreadSafeAIMatches", true,

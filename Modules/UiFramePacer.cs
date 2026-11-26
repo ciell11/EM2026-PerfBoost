@@ -14,6 +14,7 @@ namespace EM2026PerfBoost.Modules
     {
         private static ulong _defaultGcSliceNs = 3_000_000UL;
         private static bool _capturedDefaultSlice;
+        private static float _smoothBurstUntil;
 
         public static void Install(Harmony harmony)
         {
@@ -58,6 +59,12 @@ namespace EM2026PerfBoost.Modules
         {
             double dtMs = Time.unscaledDeltaTime * 1000.0;
             PerfTelemetry.RecordUiFrame(dtMs);
+
+            if (_smoothBurstUntil > 0f && Time.unscaledTime >= _smoothBurstUntil)
+            {
+                _smoothBurstUntil = 0f;
+                ApplyGcSlice(in3DMatch: false);
+            }
         }
 
         private static void ApplyGcSlice(bool in3DMatch)
@@ -97,6 +104,19 @@ namespace EM2026PerfBoost.Modules
         private static void ShowWindow_Prefix(out long __state)
         {
             __state = Stopwatch.GetTimestamp();
+            // Briefly cap incremental GC slice to 2ms during tab switch so opening any tab never stutters on GC!
+            if (Plugin.CfgSmoothIncrementalGc.Value && !Plugin.In3DMatchScene)
+            {
+                try
+                {
+                    if (GarbageCollector.isIncremental)
+                    {
+                        GarbageCollector.incrementalTimeSliceNanoseconds = 2_000_000UL;
+                        _smoothBurstUntil = Time.unscaledTime + 1.0f;
+                    }
+                }
+                catch { }
+            }
         }
 
         private static void ShowWindow_Postfix(Windows __0, long __state)

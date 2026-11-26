@@ -171,7 +171,7 @@ namespace EM2026PerfBoost.Modules
                 if (!Plugin.CfgFastDayTransitions.Value || Plugin.In3DMatchScene)
                     return;
 
-                float desired = Math.Clamp(Plugin.CfgDayPauseSpeed.Value, 1f, 100f);
+                float desired = Math.Clamp(Plugin.CfgDayPauseSpeed.Value, 1f, 200f);
                 if (Time.timeScale > 1.5f && desired > Time.timeScale)
                 {
                     Time.timeScale = desired;
@@ -191,7 +191,7 @@ namespace EM2026PerfBoost.Modules
 
                 if (!__result)
                 {
-                    float desired = Math.Clamp(Plugin.CfgDayPauseSpeed.Value, 1f, 100f);
+                    float desired = Math.Clamp(Plugin.CfgDayPauseSpeed.Value, 1f, 200f);
                     if (desired > 1f && Time.timeScale <= 1.01f)
                     {
                         Time.timeScale = desired;

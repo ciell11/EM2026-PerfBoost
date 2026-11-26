@@ -3,7 +3,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>EM2026PerfBoost</AssemblyName>
     <Product>EM2026 PerfBoost</Product>
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
     <Description>Non-destructive performance and stability optimizer for Esports Manager 2026 (compatible with iamgri mod and Iamgri Better).</Description>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>

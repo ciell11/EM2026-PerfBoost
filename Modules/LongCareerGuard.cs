@@ -107,26 +107,27 @@ namespace EM2026PerfBoost.Modules
 
                 long growthMb = (heapBytes - _baselineHeapBytes) / (1024L * 1024L);
                 long totalMb = heapBytes / (1024L * 1024L);
-                int thresholdMb = Math.Clamp(Plugin.CfgMemoryGuardGrowthMb.Value, 256, 4096);
+                int thresholdMb = Math.Clamp(Plugin.CfgMemoryGuardGrowthMb.Value, 128, 4096);
 
                 if (growthMb < thresholdMb)
                     return;
 
-                // Perform gentle idle cleanup before heap balloons to 5-6 GB
+                // Perform gentle idle cleanup before heap balloons to 3-6 GB (never runs during matches, days, or saves)
                 var sw = Stopwatch.StartNew();
                 long beforeMb = totalMb;
 
-                IL2CPP.il2cpp_gc_collect(1);
-                GC.Collect(GC.MaxGeneration, GCCollectionMode.Optimized, false);
+                long unityAllocMb = SafeTotalAllocatedMb();
+                bool heavyTrim = unityAllocMb >= Plugin.CfgUnloadAssetsThresholdMb.Value || totalMb >= Plugin.CfgUnloadAssetsThresholdMb.Value;
+
+                IL2CPP.il2cpp_gc_collect(heavyTrim ? 1 : 0);
+                GC.Collect(heavyTrim ? GC.MaxGeneration : 1, GCCollectionMode.Optimized, false);
 
                 long afterBytes = ReadCurrentHeapBytes();
                 long afterMb = afterBytes / (1024L * 1024L);
                 long freedMb = Math.Max(0, beforeMb - afterMb);
 
-                // If native Unity allocations are also very high on a long career, trigger async asset unload
-                long unityAllocMb = SafeTotalAllocatedMb();
                 bool unloadedAssets = false;
-                if (unityAllocMb >= Plugin.CfgUnloadAssetsThresholdMb.Value)
+                if (heavyTrim)
                 {
                     Resources.UnloadUnusedAssets();
                     unloadedAssets = true;

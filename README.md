@@ -14,11 +14,11 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 | Module | What It Does |
 |---|---|
 | **FPS Unlocker** (`FpsUnlocker`) | Unlocks UI frame rate to **`165 FPS`** by default (configurable in `.cfg`, `0` = vanilla, `-1` = uncapped) with VSync toggle **and Windows 1 ms multimedia timer precision (`timeBeginPeriod(1)`)** so `165 FPS` holds rock-solid instead of drifting down to ~145–153 FPS with sleep jitter. |
-| **Faster Day Transitions** (`DaySpeedBooster`) | Accelerates the dead inter-day pause (`60x` default vs `20x`, strictly outside 3D matches and automatically restored before the next day starts) and tracks real day-advance timings in `F9` telemetry. |
-| **Long-Career Memory & Stability Guard** (`LongCareerGuard`) | Protects multi-season careers (2028–2035+) from 5–6+ GB heap bloat and sudden 2.5s GC stalls by running gentle cleanups **only while idle in menus** (never during 3D matches, day simulation, or saves). Also flushes all internal caches cleanly on career/slot switches so stale pointers never persist. |
+| **Faster Day Transitions** (`DaySpeedBooster`) | Accelerates the dead inter-day pause (`100x` default vs `20x`, configurable up to `200x`, strictly outside 3D matches and automatically restored before the next day starts) and tracks real day-advance timings in `F9` telemetry. |
+| **Tighter RAM & Long-Career Guard** (`LongCareerGuard`) | Keeps RAM dramatically lower from the first minutes of play by running gentle non-blocking idle trims every `384 MB` growth (`75s` cooldown) and async `Resources.UnloadUnusedAssets()` at `1400 MB` (never during 3D matches, day simulation, or saves). Also flushes all caches cleanly on career/slot switches. |
 | **Smart After-Match Autosave** (`SmartAutosave`) | When another mod enables saving after every match, coalesces redundant back-to-back 3–4s full saves within a configurable interval (default `180s`). **Never** skips periodic `AutosaveEveryDays` saves, manual saves, or exit-to-menu saves. |
-| **Hidden Vanilla UI Skipper** (`HiddenUiSkipper`) | Exact dirty-check memoization for `InboxWindow.Renew` and `TalkWindow.Renew`; skips hidden `ShopWindow_v2` and `Basecamp_v2` rebuilds once `iamgri mod` pages are built; disables `GraphicRaycaster` on hidden `UiKit.Unseen` canvases. (`SquadWindow`, `SquadStaffWindow`, and `TransfersWindow` are left untouched so all player/staff/listing actions work 100%.) |
-| **Fast AI Transfers Accelerator** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs from `AiAcquisitionPasses.AITransfers` buckets **and** memoizes 8 hot pure `EMSkinCore` C# calculations (`PlayerMoney.Value`, `PlayerMoney.Wage`, `AiIdentity.StarRank`, `MarketView.ClubRatio`, `ClubPlan.WantsOut`, `AiSight.StarsError`, `Dormant.Is`, and negative `LockedClub.Blocks` checks) strictly during `AITransfers` using 100% pure managed Harmony — invalidated immediately on any offer/deal/pricelist change. **100% identical** transfer outcomes! |
+| **Zero-Freeze Tab Switching** (`HiddenUiSkipper` + `UiFramePacer`) | Exact dirty-check memoization for hidden vanilla `InboxWindow.Renew` and `TalkWindow.Renew` (no longer wastes 150–300 ms rebuilding on quiet day rollovers when no emails/talks changed); skips hidden `ShopWindow_v2` and `Basecamp_v2` rebuilds; disables `GraphicRaycaster` on hidden `UiKit.Unseen` canvases; and caps Unity's incremental GC slice to `2 ms` during tab switches so opening any tab stays stutter-free. |
+| **7-Pass AI Transfer & Listing Accelerator** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs from both `BuildAITransfersBuckets` and `BuildAIOptimisationBuckets`, **and** memoizes 8 hot pure `EMSkinCore` C# calculations across **all 7 heavy daily AI passes** (`AITransfers`, `AIListedPlayerInterestPass`, `AIPricelistInterestPass`, `AIOptimisationPass`, `AIElitePoachingPass`, `AITopFreeAgentPickupPass`, `AIYouthProspectPickupPass`) with instant mutation invalidation — **100% identical** transfer outcomes! |
 | **AI Identity Pool Cache** (`AiPoolCache`) | Reuses `iamgri mod`'s 88-bloc / ~6,320-player scan (`AiIdentity._pool`, 60–131 ms/day) across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
 | **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Takes a defensive thread-safe snapshot of `MatchesEngine.ProcessAIMatches` to prevent `InvalidOperationException: Collection was modified` when background day offloading and third-place decider mods run concurrently. |
 | **IamgriBetter 1.3.0+ Optimizer** (`Better130Optimizer`) | Dynamically attaches to **IamgriBetter 1.3.0 / 1.3.0-hotfix** at runtime (zero hard dependency) to eliminate its three biggest FPS bottlenecks: stops `MenuPresentation.Refresh()` from dirtying Unity Canvas & TMP meshes every single frame, replaces per-badge reflection (`BadgeColours.BeforeGet`) and per-row IL2CPP lookups (`TeamColor` / `TableColor`) with an O(1) cache invalidated instantly when custom colors are saved, and throttles `IconRecovery.BeforeTick` reflection scans. |
@@ -38,7 +38,7 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 ## Installation & Updating Mid-Career
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v0.7.0.zip` from the [**Releases**](../../releases/latest) page.
+2. Download `EM2026PerfBoost-v0.8.0.zip` from the [**Releases**](../../releases/latest) page.
 3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), **overwriting the old `EM2026PerfBoost.dll` if updating**:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
@@ -84,11 +84,11 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[FPS]` | `DisableVSync` | `true` | Disable VSync (`vSyncCount = 0`) when FPS unlock is active |
 | `[FPS]` | `ApplyIn3DMatch` | `false` | Also apply `TargetFps` / `DisableVSync` inside 3D match scenes |
 | `[DaySpeed]` | `FastDayTransitions` | `true` | Accelerate inter-day transition pauses |
-| `[DaySpeed]` | `DayPauseSpeed` | `60` | Time scale during inter-day pause (`1–100`, never affects 3D matches) |
-| `[LongCareer]` | `EnableMemoryGuard` | `true` | Proactive idle memory cleanup for multi-season (2028+) saves |
-| `[LongCareer]` | `GrowthThresholdMb` | `1024` | Heap growth (MB) above baseline before an idle cleanup triggers |
-| `[LongCareer]` | `CleanupCooldownSeconds` | `180` | Minimum real seconds between idle memory cleanups |
-| `[LongCareer]` | `UnloadUnusedAssetsThresholdMb` | `2560` | Total Unity allocated MB threshold to also call async `UnloadUnusedAssets()` |
+| `[DaySpeed]` | `DayPauseSpeed` | `100` | Time scale during inter-day pause (`1–200`, never affects 3D matches) |
+| `[LongCareer]` | `EnableMemoryGuard` | `true` | Proactive gentle idle memory trims to prevent multi-GB RAM bloat |
+| `[LongCareer]` | `GrowthThresholdMb` | `384` | Heap growth (MB) above baseline before a gentle idle trim triggers |
+| `[LongCareer]` | `CleanupCooldownSeconds` | `75` | Minimum real seconds between idle memory cleanups |
+| `[LongCareer]` | `UnloadUnusedAssetsThresholdMb` | `1400` | Total Unity allocated MB threshold to also call async `UnloadUnusedAssets()` |
 | `[Autosave]` | `CoalesceAfterMatchSaves` | `true` | Coalesce redundant back-to-back after-match saves |
 | `[Autosave]` | `MinSecondsBetweenMatchSaves` | `180` | Minimum real seconds between automatic after-match saves (`0` = rely purely on `AutosaveEveryDays`) |
 | `[UI]` | `SkipHiddenVanillaUiRebuilds` | `true` | Skip redundant hidden vanilla UI rebuilds underneath `iamgri mod` |

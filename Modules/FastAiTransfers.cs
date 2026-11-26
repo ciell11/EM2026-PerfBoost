@@ -68,8 +68,9 @@ namespace EM2026PerfBoost.Modules
         private static TeamPredicate _isLockedClub;
         private static FieldInfo _fLockedClubId;
 
-        // Single-thread ownership during AITransfers => zero lock contention on hot path
+        // Single-thread ownership during active AI passes (re-entrant depth supports nested/chained passes)
         private static int _aiTransfersThreadId;
+        private static int _activePassDepth;
         private static long _mutationEpoch = 1;
         private static long _cachedEpoch = -1;
         private static long _passStartTicks;
@@ -94,32 +95,44 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
-                var aiTransfers = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers));
-                if (aiTransfers != null)
+                // Scope pure managed memoization across ALL heavy daily AI transfer & listing passes!
+                var passPre = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Prefix)) { priority = Priority.First };
+                var passFin = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Finalizer)) { priority = Priority.Last };
+                int scopedPasses = 0;
+                (Type t, string m)[] heavyPasses =
                 {
-                    harmony.Patch(
-                        aiTransfers,
-                        prefix: new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Prefix))
+                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers)),
+                    (typeof(AiListingPasses), nameof(AiListingPasses.AIListedPlayerInterestPass)),
+                    (typeof(AiListingPasses), nameof(AiListingPasses.AIPricelistInterestPass)),
+                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AIOptimisationPass)),
+                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AIElitePoachingPass)),
+                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITopFreeAgentPickupPass)),
+                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AIYouthProspectPickupPass)),
+                };
+                foreach (var (pt, pm) in heavyPasses)
+                {
+                    try
+                    {
+                        var method = AccessTools.Method(pt, pm);
+                        if (method != null)
                         {
-                            priority = Priority.First
-                        },
-                        finalizer: new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Finalizer))
-                        {
-                            priority = Priority.Last
-                        });
+                            harmony.Patch(method, prefix: passPre, finalizer: passFin);
+                            scopedPasses++;
+                        }
+                    }
+                    catch { }
                 }
 
+                var bucketPost = new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAITransfersBuckets_Postfix)) { priority = Priority.Last };
                 var buildBuckets = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.BuildAITransfersBuckets));
                 if (buildBuckets != null)
-                {
-                    harmony.Patch(
-                        buildBuckets,
-                        postfix: new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAITransfersBuckets_Postfix))
-                        {
-                            priority = Priority.Last
-                        });
-                    Plugin.Logger.LogMessage("[FastAiTransfers] Patched AiAcquisitionPasses.BuildAITransfersBuckets (prunes dormant/locked clubs before O(N*M) scan).");
-                }
+                    harmony.Patch(buildBuckets, postfix: bucketPost);
+
+                var buildOptBuckets = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.BuildAIOptimisationBuckets));
+                if (buildOptBuckets != null)
+                    harmony.Patch(buildOptBuckets, postfix: bucketPost);
+
+                Plugin.Logger.LogMessage($"[FastAiTransfers] Scoped memoization active on {scopedPasses}/7 daily AI passes + dormant/locked bucket pruning.");
 
                 var buildPool = AccessTools.Method(typeof(AiCandidateSelection), nameof(AiCandidateSelection.BuildAvailablePlayerPool));
                 if (buildPool != null)
@@ -271,6 +284,7 @@ namespace EM2026PerfBoost.Modules
 
         public static void Detach()
         {
+            Volatile.Write(ref _activePassDepth, 0);
             Volatile.Write(ref _aiTransfersThreadId, 0);
             ResetState();
         }
@@ -327,6 +341,16 @@ namespace EM2026PerfBoost.Modules
                 if (!Plugin.CfgFastAiTransfers.Value)
                     return;
 
+                int tid = Environment.CurrentManagedThreadId;
+                int existingTid = Volatile.Read(ref _aiTransfersThreadId);
+                if (existingTid == tid && _activePassDepth > 0)
+                {
+                    _activePassDepth++;
+                    return;
+                }
+                if (existingTid != 0 && existingTid != tid)
+                    return;
+
                 long epoch = Interlocked.Increment(ref _mutationEpoch);
                 ClearAllCaches(epoch);
                 _dormantPtrCache.Clear();
@@ -343,7 +367,8 @@ namespace EM2026PerfBoost.Modules
                 _passHitsWantsOut = _passHitsStarsError = _passHitsDormant = _passHitsLocked = 0;
                 _passStartTicks = Stopwatch.GetTimestamp();
 
-                Volatile.Write(ref _aiTransfersThreadId, Environment.CurrentManagedThreadId);
+                _activePassDepth = 1;
+                Volatile.Write(ref _aiTransfersThreadId, tid);
             }
             catch { }
         }
@@ -352,9 +377,14 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
-                if (Volatile.Read(ref _aiTransfersThreadId) == 0)
+                int tid = Environment.CurrentManagedThreadId;
+                if (Volatile.Read(ref _aiTransfersThreadId) != tid)
                     return;
 
+                if (--_activePassDepth > 0)
+                    return;
+
+                _activePassDepth = 0;
                 Volatile.Write(ref _aiTransfersThreadId, 0);
 
                 long elapsedMs = _passStartTicks > 0
@@ -368,7 +398,7 @@ namespace EM2026PerfBoost.Modules
                     Interlocked.Add(ref PerfTelemetry.AiMemoHitsTotal, totalHits);
 
                 int passNum = Interlocked.Increment(ref _passCount);
-                if (passNum == 1 || passNum % 25 == 0)
+                if (passNum == 1 || passNum % 40 == 0)
                 {
                     Plugin.Logger.LogMessage(
                         $"[FastAiTransfers] Pass #{passNum}: {elapsedMs}ms | prio {PerfTelemetry.LastPrioBefore}->{PerfTelemetry.LastPrioAfter}, other {PerfTelemetry.LastOtherBefore}->{PerfTelemetry.LastOtherAfter} | hits: Value={_passHitsValue}, Wage={_passHitsWage}, StarRank={_passHitsStarRank}, Ratio={_passHitsClubRatio}, WantsOut={_passHitsWantsOut}, Err={_passHitsStarsError}, Dormant={_passHitsDormant}, Locked={_passHitsLocked}");
@@ -381,6 +411,7 @@ namespace EM2026PerfBoost.Modules
             }
             catch
             {
+                _activePassDepth = 0;
                 Volatile.Write(ref _aiTransfersThreadId, 0);
             }
         }
