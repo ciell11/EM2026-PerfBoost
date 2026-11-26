@@ -38,7 +38,7 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 ## Installation & Updating Mid-Career
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v1.4.1.zip` from the [**Releases**](../../releases/latest) page.
+2. Download `EM2026PerfBoost-v1.4.2.zip` from the [**Releases**](../../releases/latest) page.
 3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), **overwriting the old `EM2026PerfBoost.dll` if updating**:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
@@ -96,7 +96,7 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[Simulation]` | `CacheAiIdentityPools` | `true` | Cache `AiIdentity._pool` across quiet days with exact mutation invalidation |
 | `[Simulation]` | `AiPoolMaxCacheDays` | `3` | Maximum quiet in-game days before forcing a fresh rebuild |
 | `[Simulation]` | `PruneDormantFromAiTransfers` | `true` | Prune dormant/locked clubs and memoize 11 hot pure `EMSkinCore` lookups across all 7 daily AI passes |
-| `[Simulation]` | `EmptyScanSkipDays` | `3` | Stagger redundant re-scans for non-priority clubs that found 0 candidates (`0` = daily; `<5`-player clubs & changed squads/budgets always scan immediately) |
+| `[Simulation]` | `EmptyScanSkipDays` | `5` | Stagger redundant re-scans for non-priority clubs that found 0 candidates (`0` = daily, `5` = ~5× faster `AITransfers`; priority clubs & changed squads/budgets always scan immediately) |
 | `[Stability]` | `ThreadSafeAIMatches` | `true` | Thread-safe list snapshot for `MatchesEngine.ProcessAIMatches` |
 | `[Logging]` | `QuietConsoleInfo` | `true` | Filter verbose `Info`/`Debug` spam from the Windows console |
 | `[Logging]` | `QuietDiskInfo` | `false` | Also filter verbose `Info` spam from `LogOutput.log` on disk |

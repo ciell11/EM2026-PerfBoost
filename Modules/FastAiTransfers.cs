@@ -539,7 +539,7 @@ namespace EM2026PerfBoost.Modules
 
         private static void UpdateEmptyScanCooldowns()
         {
-            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 7);
+            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 14);
             if (skipDays <= 0 || _scannedOtherThisPass.Count == 0)
             {
                 _scannedOtherThisPass.Clear();
@@ -967,7 +967,7 @@ namespace EM2026PerfBoost.Modules
 
         private static int ApplyEmptyScanCooldown(Il2CppSystem.Collections.Generic.List<DataTeam> other)
         {
-            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 7);
+            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 14);
             if (skipDays <= 0)
                 return 0;
 
@@ -1032,13 +1032,10 @@ namespace EM2026PerfBoost.Modules
                     continue;
                 }
 
-                // Never skip an under-5 squad even if it landed in other!
-                if (squadCount < 5)
-                {
-                    _emptyOtherCooldowns.Remove(ptr);
-                    continue;
-                }
-
+                // Note: _scratchOtherTeams consists mostly of lower-tier under-5 squads; _scratchPriorityTeams
+                // is already exempt (never passed to ApplyEmptyScanCooldown). If an _scratchOtherTeams club
+                // scanned all ~5,000+ players and found ZERO eligible candidates, stagger its next re-scan
+                // unless its roster shrunk further, its TransferBudget grew, or the month changed!
                 if (_emptyOtherCooldowns.TryGetValue(ptr, out var entry)
                     && dayKey < entry.NextScanDayKey
                     && monthKey == entry.MonthKey

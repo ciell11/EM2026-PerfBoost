@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.4.1";
+        public const string PluginVersion = "1.4.2";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -230,9 +230,9 @@ namespace EM2026PerfBoost
                 "Accelerates daily AI transfer passes by pruning dormant/locked clubs and memoizing 11 hot pure EMSkinCore lookups with zero gameplay change.");
 
             CfgEmptyScanSkipDays = Config.Bind(
-                "Simulation", "EmptyScanSkipDays", 3,
-                new ConfigDescription("Staggers redundant re-scans for non-priority AI clubs (_scratchOtherTeams) that scanned all ~6,000 players and found zero candidates (0 = rescan every day, 3 = recheck every 3 days; priority <5-player clubs and clubs whose squad/budget changed ALWAYS scan immediately).",
-                    new AcceptableValueRange<int>(0, 7)));
+                "Simulation", "EmptyScanSkipDays", 5,
+                new ConfigDescription("Staggers redundant re-scans for non-priority AI clubs (_scratchOtherTeams) that scanned all ~5,000+ players and found zero candidates (0 = rescan every day, 5 = recheck every 5 days; priority clubs, clubs with candidates, and any club whose squad shrinks or TransferBudget grows ALWAYS scan immediately).",
+                    new AcceptableValueRange<int>(0, 14)));
 
             CfgQuietConsoleInfo = Config.Bind(
                 "Logging", "QuietConsoleInfo", true,
@@ -267,24 +267,25 @@ namespace EM2026PerfBoost
                 "Diagnostics", "ConfigSchemaVersion", 0,
                 "Internal config migration marker so drop-in updates upgrade old defaults automatically while keeping custom user values.");
 
-            // One-time seamless migration for players upgrading over v1.3.x / v0.7.0 / v0.8.0 without deleting their .cfg
-            if (CfgConfigSchemaVersion.Value < 14)
+            // One-time seamless migration for players upgrading over v1.3.x / v1.4.0 / v1.4.1 without deleting their .cfg
+            if (CfgConfigSchemaVersion.Value < 15)
             {
                 bool migrated = false;
                 if (Math.Abs(CfgDayPauseSpeed.Value - 60f) < 0.01f) { CfgDayPauseSpeed.Value = 100f; migrated = true; }
                 if (CfgMemoryGuardGrowthMb.Value == 1024 || CfgMemoryGuardGrowthMb.Value == 384) { CfgMemoryGuardGrowthMb.Value = 512; migrated = true; }
                 if (CfgMemoryGuardCooldownSec.Value == 180 || CfgMemoryGuardCooldownSec.Value == 75) { CfgMemoryGuardCooldownSec.Value = 120; migrated = true; }
                 if (CfgUnloadAssetsThresholdMb.Value == 2560 || CfgUnloadAssetsThresholdMb.Value == 1400) { CfgUnloadAssetsThresholdMb.Value = 2200; migrated = true; }
+                if (CfgEmptyScanSkipDays.Value == 3) { CfgEmptyScanSkipDays.Value = 5; migrated = true; }
                 if (!CfgSmoothIncrementalGc.Value && CfgGcSliceMs.Value == 2)
                 {
                     CfgSmoothIncrementalGc.Value = true;
                     CfgGcSliceMs.Value = 4;
                     migrated = true;
                 }
-                CfgConfigSchemaVersion.Value = 14;
+                CfgConfigSchemaVersion.Value = 15;
                 Config.Save();
                 if (migrated)
-                    Logger?.LogMessage("[Config] Automatically migrated old default values to v1.4.0 tuning (100x day pause, 512 MB gentle RAM trim / 2200 MB asset unload).");
+                    Logger?.LogMessage("[Config] Automatically migrated default values to v1.4.2 tuning (100x day pause, EmptyScanSkipDays=5, 512 MB gentle RAM trim).");
             }
         }
 
