@@ -181,13 +181,15 @@ namespace EM2026PerfBoost.Modules
                         postfix: new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAIOptimisationBuckets_Postfix)) { priority = Priority.Last });
                 }
 
-                // Track which teams actually had >=1 candidate during AITransfers (for empty-scan cooldown)
+                // Track which teams actually got a picked player during AITransfers (for empty-scan cooldown):
+                // MUST be a Postfix checking __result != null! (RoleAwarePickPlayer is called even when
+                // SquadNeeds.Pick rejects every candidate in the pool and returns null!)
                 var rolePick = AccessTools.Method(typeof(AiCandidateSelection), nameof(AiCandidateSelection.RoleAwarePickPlayer));
                 if (rolePick != null)
                 {
                     harmony.Patch(
                         rolePick,
-                        prefix: new HarmonyMethod(typeof(FastAiTransfers), nameof(RoleAwarePick_Prefix)) { priority = Priority.First });
+                        postfix: new HarmonyMethod(typeof(FastAiTransfers), nameof(RoleAwarePick_Postfix)) { priority = Priority.Last });
                 }
 
                 Plugin.Logger.LogMessage(
@@ -529,9 +531,9 @@ namespace EM2026PerfBoost.Modules
             }
         }
 
-        private static void RoleAwarePick_Prefix(DataTeam __0, Il2CppSystem.Collections.Generic.List<DataPlayer> __1)
+        private static void RoleAwarePick_Postfix(DataTeam __0, DataPlayer __result)
         {
-            if (_isMainAiTransfersPass && IsActiveOnCurrentThread() && __0 != null && __1 != null && __1.Count > 0)
+            if (_isMainAiTransfersPass && IsActiveOnCurrentThread() && __0 != null && __result != null)
             {
                 _teamsWithCandidatesThisPass.Add(__0.Pointer);
             }
@@ -1032,15 +1034,15 @@ namespace EM2026PerfBoost.Modules
                     continue;
                 }
 
-                // Note: _scratchOtherTeams consists mostly of lower-tier under-5 squads; _scratchPriorityTeams
-                // is already exempt (never passed to ApplyEmptyScanCooldown). If an _scratchOtherTeams club
-                // scanned all ~5,000+ players and found ZERO eligible candidates, stagger its next re-scan
-                // unless its roster shrunk further, its TransferBudget grew, or the month changed!
+                // Note: _scratchOtherTeams consists mostly of lower-tier clubs whose national bloc has 0
+                // viable picks; _scratchPriorityTeams is always exempt (never passed here).
+                // Allow a small $25k daily sponsor/ticket trickle without breaking the cooldown, while any
+                // real transfer sale / prize / monthly budget jump or roster shrink wakes the club immediately!
                 if (_emptyOtherCooldowns.TryGetValue(ptr, out var entry)
                     && dayKey < entry.NextScanDayKey
                     && monthKey == entry.MonthKey
                     && squadCount >= entry.SquadCount
-                    && budget <= entry.Budget)
+                    && budget <= entry.Budget + 25_000)
                 {
                     other.RemoveAt(i);
                     skipped++;

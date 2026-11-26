@@ -21,7 +21,7 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 | **7-Pass AI Transfer & Listing Accelerator** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs from both `BuildAITransfersBuckets` and `BuildAIOptimisationBuckets`, **and** memoizes 8 hot pure `EMSkinCore` C# calculations across **all 7 heavy daily AI passes** (`AITransfers`, `AIListedPlayerInterestPass`, `AIPricelistInterestPass`, `AIOptimisationPass`, `AIElitePoachingPass`, `AITopFreeAgentPickupPass`, `AIYouthProspectPickupPass`) with instant mutation invalidation — **100% identical** transfer outcomes! |
 | **AI Identity Pool Cache** (`AiPoolCache`) | Reuses `iamgri mod`'s 88-bloc / ~6,320-player scan (`AiIdentity._pool`, 60–131 ms/day) across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
 | **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Takes a defensive thread-safe snapshot of `MatchesEngine.ProcessAIMatches` to prevent `InvalidOperationException: Collection was modified` when background day offloading and third-place decider mods run concurrently. |
-| **IamgriBetter 1.3.0+ Optimizer** (`Better130Optimizer`) | Dynamically attaches to **IamgriBetter 1.3.0 / 1.3.0-hotfix** at runtime (zero hard dependency) to eliminate its three biggest FPS bottlenecks: stops `MenuPresentation.Refresh()` from dirtying Unity Canvas & TMP meshes every single frame, replaces per-badge reflection (`BadgeColours.BeforeGet`) and per-row IL2CPP lookups (`TeamColor` / `TableColor`) with an O(1) cache invalidated instantly when custom colors are saved, and throttles `IconRecovery.BeforeTick` reflection scans. |
+| **IamgriBetter 1.3.0+ Optimizer** (`Better130Optimizer`) | Dynamically attaches to **IamgriBetter 1.3.0 / 1.3.0-hotfix** at runtime (zero hard dependency, 10 hot-path optimizations): stops `MenuPresentation.Refresh()` per-frame Canvas/TMP rebuilds, caches `BadgeColours.BeforeGet`, `TeamColor`, `TableColor`, and `CareerOptions.get_IsFrozen` with strictly isolated O(1) caches, and throttles 165×/sec Reflection/IL2CPP-allocating background ticks (`IconRecovery`, `TalentReports`, `CoreBuyoutRecovery`, `CareerOptions`, `ProfileRecovery`). |
 | **Log & Stack-Trace Throttler** (`LogThrottler`) | Filters verbose `Info`/`Debug` spam from `iamgri mod`, `Iamgri Better`, `IamgriGrandSlam`, `IamgriThirdPlace`, and `IamgriUpdateFeatures` out of the synchronous Windows console window, and disables native Unity stack-trace walking on `Debug.Log` / `Debug.LogWarning` (keeping `Error`/`Exception` traces 100% enabled) to eliminate `Player.log` freeze storms. |
 
 ---
@@ -38,7 +38,7 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 ## Installation & Updating Mid-Career
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v1.4.2.zip` from the [**Releases**](../../releases/latest) page.
+2. Download `EM2026PerfBoost-v1.5.0.zip` from the [**Releases**](../../releases/latest) page.
 3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), **overwriting the old `EM2026PerfBoost.dll` if updating**:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
@@ -96,7 +96,7 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[Simulation]` | `CacheAiIdentityPools` | `true` | Cache `AiIdentity._pool` across quiet days with exact mutation invalidation |
 | `[Simulation]` | `AiPoolMaxCacheDays` | `3` | Maximum quiet in-game days before forcing a fresh rebuild |
 | `[Simulation]` | `PruneDormantFromAiTransfers` | `true` | Prune dormant/locked clubs and memoize 11 hot pure `EMSkinCore` lookups across all 7 daily AI passes |
-| `[Simulation]` | `EmptyScanSkipDays` | `5` | Stagger redundant re-scans for non-priority clubs that found 0 candidates (`0` = daily, `5` = ~5× faster `AITransfers`; priority clubs & changed squads/budgets always scan immediately) |
+| `[Simulation]` | `EmptyScanSkipDays` | `7` | Stagger redundant re-scans for non-priority clubs that found no pick (`0` = daily, `7` = weekly re-check / ~5–7× faster `AITransfers`; priority clubs, clubs with picks, and clubs whose squad shrinks or `TransferBudget` grows by >\$25k always scan immediately) |
 | `[Stability]` | `ThreadSafeAIMatches` | `true` | Thread-safe list snapshot for `MatchesEngine.ProcessAIMatches` |
 | `[Logging]` | `QuietConsoleInfo` | `true` | Filter verbose `Info`/`Debug` spam from the Windows console |
 | `[Logging]` | `QuietDiskInfo` | `false` | Also filter verbose `Info` spam from `LogOutput.log` on disk |

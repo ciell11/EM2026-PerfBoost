@@ -48,8 +48,12 @@ namespace EM2026PerfBoost.Modules
         private static readonly Dictionary<string, uint?> _tableOverrideCache = new(256, StringComparer.Ordinal);
         private static float _colorCacheExpireTime;
 
-        // IconRecovery throttle
+        // IconRecovery & per-frame IamgriBetter 1.3.0 tick throttles
         private static float _nextIconRecoveryTime;
+        private static float _nextTalentTickTime;
+        private static float _nextBuyoutTickTime;
+        private static float _nextCareerOptsTickTime;
+        private static float _nextProfileRecTickTime;
 
         // CareerOptions.get_IsFrozen daily cache (avoids 4 IL2CPP string allocs + DataTeams.Get per AI call!)
         private static int _frozenCacheDayKey = -1;
@@ -65,6 +69,10 @@ namespace EM2026PerfBoost.Modules
             _lastMenuUiActive = false;
             _nextMenuRefreshTime = 0f;
             _nextIconRecoveryTime = 0f;
+            _nextTalentTickTime = 0f;
+            _nextBuyoutTickTime = 0f;
+            _nextCareerOptsTickTime = 0f;
+            _nextProfileRecTickTime = 0f;
             _frozenCacheValid = false;
             _frozenCacheDayKey = -1;
             _frozenCacheSlot = "";
@@ -250,7 +258,7 @@ namespace EM2026PerfBoost.Modules
                     }
                 }
 
-                // 5. Cache CareerOptions.get_IsFrozen per (day, slot) so AI passes don't allocate 4 IL2CPP strings + DataTeams.Get per call
+                // 5. Cache CareerOptions.get_IsFrozen per (day, slot) & throttle CareerOptions.Tick (0.5s)
                 var careerOpts = betterAsm.GetType("IamgriBetter.History.CareerOptions", false);
                 if (careerOpts != null)
                 {
@@ -263,11 +271,43 @@ namespace EM2026PerfBoost.Modules
                         patched++;
                     }
 
+                    var coTick = careerOpts.GetMethod("Tick", flags);
+                    if (coTick != null)
+                    {
+                        harmony.Patch(coTick, prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(CareerOptsTick_Prefix)) { priority = Priority.First });
+                        patched++;
+                    }
+
                     var invFrozen = new HarmonyMethod(typeof(Better130Optimizer), nameof(InvalidateFrozenCache));
                     var created = careerOpts.GetMethod("Created", flags);
                     if (created != null) harmony.Patch(created, postfix: invFrozen);
                     var reset = careerOpts.GetMethod("ResetContract", flags);
                     if (reset != null) harmony.Patch(reset, postfix: invFrozen);
+                }
+
+                // 6-8. Throttle 165x/sec Reflection + IL2CPP string-allocating background Tick polls in IamgriBetter 1.3.0+
+                var talentRep = betterAsm.GetType("IamgriBetter.History.TalentReports", false);
+                var talentTick = talentRep?.GetMethod("Tick", flags);
+                if (talentTick != null)
+                {
+                    harmony.Patch(talentTick, prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(TalentTick_Prefix)) { priority = Priority.First });
+                    patched++;
+                }
+
+                var buyoutRec = betterAsm.GetType("IamgriBetter.History.CoreBuyoutRecovery", false);
+                var buyoutTick = buyoutRec?.GetMethod("Tick", flags);
+                if (buyoutTick != null)
+                {
+                    harmony.Patch(buyoutTick, prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(BuyoutTick_Prefix)) { priority = Priority.First });
+                    patched++;
+                }
+
+                var profRec = betterAsm.GetType("IamgriBetter.History.ProfileRecovery", false);
+                var profTick = profRec?.GetMethod("Tick", flags);
+                if (profTick != null)
+                {
+                    harmony.Patch(profTick, prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(ProfileRecTick_Prefix)) { priority = Priority.First });
+                    patched++;
                 }
 
                 Plugin.Logger.LogMessage(
@@ -287,6 +327,14 @@ namespace EM2026PerfBoost.Modules
             try
             {
                 float now = Time.unscaledTime;
+
+                // Fast exit during career gameplay without even touching _menuUiField via Reflection
+                if (!_lastMenuUiActive && _lastMenuUiPtr == IntPtr.Zero && now < _nextMenuRefreshTime)
+                {
+                    Interlocked.Increment(ref PerfTelemetry.BetterMenuRefreshesSkipped);
+                    return false;
+                }
+
                 IntPtr uiPtr = IntPtr.Zero;
                 bool active = false;
 
@@ -524,6 +572,58 @@ namespace EM2026PerfBoost.Modules
                 _frozenCacheValid = true;
             }
             catch { }
+        }
+
+        private static bool TalentTick_Prefix()
+        {
+            if (!Plugin.CfgOptimizeIamgriBetter.Value) return true;
+            float now = Time.unscaledTime;
+            if (now < _nextTalentTickTime)
+            {
+                Interlocked.Increment(ref PerfTelemetry.BetterIconChecksSkipped);
+                return false;
+            }
+            _nextTalentTickTime = now + 0.5f;
+            return true;
+        }
+
+        private static bool BuyoutTick_Prefix()
+        {
+            if (!Plugin.CfgOptimizeIamgriBetter.Value) return true;
+            float now = Time.unscaledTime;
+            if (now < _nextBuyoutTickTime)
+            {
+                Interlocked.Increment(ref PerfTelemetry.BetterIconChecksSkipped);
+                return false;
+            }
+            _nextBuyoutTickTime = now + 0.5f;
+            return true;
+        }
+
+        private static bool CareerOptsTick_Prefix()
+        {
+            if (!Plugin.CfgOptimizeIamgriBetter.Value) return true;
+            float now = Time.unscaledTime;
+            if (now < _nextCareerOptsTickTime)
+            {
+                Interlocked.Increment(ref PerfTelemetry.BetterIconChecksSkipped);
+                return false;
+            }
+            _nextCareerOptsTickTime = now + 0.5f;
+            return true;
+        }
+
+        private static bool ProfileRecTick_Prefix()
+        {
+            if (!Plugin.CfgOptimizeIamgriBetter.Value) return true;
+            float now = Time.unscaledTime;
+            if (now < _nextProfileRecTickTime)
+            {
+                Interlocked.Increment(ref PerfTelemetry.BetterIconChecksSkipped);
+                return false;
+            }
+            _nextProfileRecTickTime = now + 0.25f;
+            return true;
         }
 
         private static void CheckColorCacheExpiry()
