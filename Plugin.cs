@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "0.8.0";
+        public const string PluginVersion = "1.4.0";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -180,19 +180,19 @@ namespace EM2026PerfBoost
                 "Protects careers from multi-GB RAM bloat and sudden GC freezes by running gentle idle trims in menus (never during matches, day ticks, or saves).");
 
             CfgMemoryGuardGrowthMb = Config.Bind(
-                "LongCareer", "GrowthThresholdMb", 384,
+                "LongCareer", "GrowthThresholdMb", 512,
                 new ConfigDescription("Heap growth (in MB) above baseline before a gentle idle trim is allowed.",
                     new AcceptableValueRange<int>(128, 4096)));
 
             CfgMemoryGuardCooldownSec = Config.Bind(
-                "LongCareer", "CleanupCooldownSeconds", 75,
+                "LongCareer", "CleanupCooldownSeconds", 120,
                 new ConfigDescription("Minimum real seconds between automatic idle memory cleanups.",
                     new AcceptableValueRange<int>(30, 1800)));
 
             CfgUnloadAssetsThresholdMb = Config.Bind(
-                "LongCareer", "UnloadUnusedAssetsThresholdMb", 1400,
+                "LongCareer", "UnloadUnusedAssetsThresholdMb", 2200,
                 new ConfigDescription("If total Unity allocated memory exceeds this threshold (MB) during an idle cleanup, also call async Resources.UnloadUnusedAssets().",
-                    new AcceptableValueRange<int>(768, 8192)));
+                    new AcceptableValueRange<int>(1024, 8192)));
 
             CfgMatchThreadSafety = Config.Bind(
                 "Stability", "ThreadSafeAIMatches", true,
@@ -261,18 +261,24 @@ namespace EM2026PerfBoost
                 "Diagnostics", "ConfigSchemaVersion", 0,
                 "Internal config migration marker so drop-in updates upgrade old defaults automatically while keeping custom user values.");
 
-            // One-time seamless migration for players upgrading over v1.3.x / v0.7.0 without deleting their .cfg
-            if (CfgConfigSchemaVersion.Value < 8)
+            // One-time seamless migration for players upgrading over v1.3.x / v0.7.0 / v0.8.0 without deleting their .cfg
+            if (CfgConfigSchemaVersion.Value < 14)
             {
                 bool migrated = false;
                 if (Math.Abs(CfgDayPauseSpeed.Value - 60f) < 0.01f) { CfgDayPauseSpeed.Value = 100f; migrated = true; }
-                if (CfgMemoryGuardGrowthMb.Value == 1024) { CfgMemoryGuardGrowthMb.Value = 384; migrated = true; }
-                if (CfgMemoryGuardCooldownSec.Value == 180) { CfgMemoryGuardCooldownSec.Value = 75; migrated = true; }
-                if (CfgUnloadAssetsThresholdMb.Value == 2560) { CfgUnloadAssetsThresholdMb.Value = 1400; migrated = true; }
-                CfgConfigSchemaVersion.Value = 8;
+                if (CfgMemoryGuardGrowthMb.Value == 1024 || CfgMemoryGuardGrowthMb.Value == 384) { CfgMemoryGuardGrowthMb.Value = 512; migrated = true; }
+                if (CfgMemoryGuardCooldownSec.Value == 180 || CfgMemoryGuardCooldownSec.Value == 75) { CfgMemoryGuardCooldownSec.Value = 120; migrated = true; }
+                if (CfgUnloadAssetsThresholdMb.Value == 2560 || CfgUnloadAssetsThresholdMb.Value == 1400) { CfgUnloadAssetsThresholdMb.Value = 2200; migrated = true; }
+                if (!CfgSmoothIncrementalGc.Value && CfgGcSliceMs.Value == 2)
+                {
+                    CfgSmoothIncrementalGc.Value = true;
+                    CfgGcSliceMs.Value = 4;
+                    migrated = true;
+                }
+                CfgConfigSchemaVersion.Value = 14;
                 Config.Save();
                 if (migrated)
-                    Logger?.LogMessage("[Config] Automatically upgraded old default values to v0.8.0 tuning (100x day pause, 384 MB RAM trim).");
+                    Logger?.LogMessage("[Config] Automatically migrated old default values to v1.4.0 tuning (100x day pause, 512 MB gentle RAM trim / 2200 MB asset unload).");
             }
         }
 

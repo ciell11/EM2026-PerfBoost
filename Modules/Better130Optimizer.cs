@@ -12,16 +12,21 @@ namespace EM2026PerfBoost.Modules
     /// Discovers IamgriBetter dynamically at runtime with ZERO compile-time dependency so EM2026PerfBoost
     /// stays 100% compatible standalone, with older IamgriBetter 1.1.x, and with future 1.3.x updates.
     ///
-    /// Eliminates three major FPS bottlenecks introduced in IamgriBetter 1.3.0:
+    /// Eliminates three major FPS bottlenecks introduced in IamgriBetter 1.3.0 while preserving 100%
+    /// identical visuals and custom club/academy colors:
     /// 1. MenuPresentation.Refresh() ran on MainMenuPage.Tick every frame and unconditionally mutated
     ///    RectTransform + TMP_Text properties, dirtying the Unity Canvas every frame -> throttled to
     ///    only execute when MainMenuPage._ui changes/activates or on a gentle 1.0s safety heartbeat.
-    /// 2. BadgeColours.BeforeGet + MenuPresentation.TeamColor/TableColor performed reflection
-    ///    (EmSkinUi.Call + object[] allocation) and repeated IL2CPP DataTeams/Academy lookups on every
-    ///    team badge and table row -> fast O(1) dictionary cache, invalidated immediately on
-    ///    ClubIdentity.Save, BadgeColours.Invalidate, or career slot change.
-    /// 3. IconRecovery.BeforeTick ran LINQ Cast().ToArray() + 3 reflection calls per icon every tick
-    ///    -> throttled to run at most once every 0.75s while still recovering any missing icons.
+    /// 2. BadgeColours.BeforeGet(string __1, bool __2, ref uint __6) + MenuPresentation.TeamColor/TableColor
+    ///    performed reflection (EmSkinUi.Call + object[] allocation) and repeated IL2CPP DataTeams/Academy
+    ///    lookups on every team badge and table row -> three isolated O(1) caches:
+    ///      - _badgeColourCache strictly for Theme.TeamColour(teamId) when bool __2 == false
+    ///      - _teamOverrideCache / _tableOverrideCache storing Nullable<uint> overrides so non-custom
+    ///        clubs (99.6% of teams) return immediately WITHOUT touching Theme's base color!
+    ///    Invalidated immediately on ClubIdentity.Save, BadgeColours.Invalidate, or career slot change.
+    /// 3. IconRecovery.BeforeTick(object __instance, bool __0) ran LINQ Cast().ToArray() + 3 reflection
+    ///    calls per icon every tick -> throttled to once every 0.75s for routine ticks while ALWAYS
+    ///    allowing forced recoveries (__0 == true) immediately.
     /// </summary>
     internal static class Better130Optimizer
     {
@@ -34,10 +39,13 @@ namespace EM2026PerfBoost.Modules
         private static bool _lastMenuUiActive;
         private static float _nextMenuRefreshTime;
 
-        // Cached reflection handles for BadgeColours / Theme.TeamColour
+        // Direct bound delegate to EMSkinCore.Theme.TeamColour(string)
         private static Func<string, uint> _directTeamColour;
-        private static readonly Dictionary<string, uint> _teamColorCache = new(256, StringComparer.Ordinal);
-        private static readonly Dictionary<string, uint> _tableColorCache = new(256, StringComparer.Ordinal);
+
+        // Strictly isolated color caches (never cross-contaminate badge colors with Theme postfixes!)
+        private static readonly Dictionary<string, uint> _badgeColourCache = new(256, StringComparer.Ordinal);
+        private static readonly Dictionary<string, uint?> _teamOverrideCache = new(256, StringComparer.Ordinal);
+        private static readonly Dictionary<string, uint?> _tableOverrideCache = new(256, StringComparer.Ordinal);
         private static float _colorCacheExpireTime;
 
         // IconRecovery throttle
@@ -56,13 +64,17 @@ namespace EM2026PerfBoost.Modules
 
         public static void InvalidateColorCaches()
         {
-            lock (_teamColorCache)
+            lock (_badgeColourCache)
             {
-                _teamColorCache.Clear();
+                _badgeColourCache.Clear();
             }
-            lock (_tableColorCache)
+            lock (_teamOverrideCache)
             {
-                _tableColorCache.Clear();
+                _teamOverrideCache.Clear();
+            }
+            lock (_tableOverrideCache)
+            {
+                _tableOverrideCache.Clear();
             }
             _colorCacheExpireTime = 0f;
         }
@@ -78,16 +90,17 @@ namespace EM2026PerfBoost.Modules
 
             try
             {
+                const BindingFlags flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
                 var menuPage = coreAsm.GetType("MainMenuPage", false);
                 if (menuPage != null)
                 {
-                    _menuUiField = menuPage.GetField("_ui", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                    _menuUiField = menuPage.GetField("_ui", flags);
                 }
 
                 var theme = coreAsm.GetType("Theme", false);
                 if (theme != null)
                 {
-                    var tc = theme.GetMethod("TeamColour", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(string) }, null);
+                    var tc = theme.GetMethod("TeamColour", flags, null, new[] { typeof(string) }, null);
                     if (tc != null && tc.ReturnType == typeof(uint))
                     {
                         _directTeamColour = (Func<string, uint>)Delegate.CreateDelegate(typeof(Func<string, uint>), tc);
@@ -152,7 +165,7 @@ namespace EM2026PerfBoost.Modules
                         patched++;
                     }
 
-                    // 2. Cache MenuPresentation.TeamColor & TableColor (avoids per-row DataTeams + Academy IL2CPP calls)
+                    // 2. Non-destructive override cache for MenuPresentation.TeamColor & TableColor
                     var teamColor = menuPres.GetMethod("TeamColor", flags);
                     if (teamColor != null)
                     {
@@ -178,12 +191,12 @@ namespace EM2026PerfBoost.Modules
                     }
                 }
 
-                // 3. Optimize BadgeColours.BeforeGet (replaces per-badge reflection EmSkinUi.Call with direct cached delegate)
+                // 3. Optimize BadgeColours.BeforeGet(String __1, Boolean __2, UInt32& __6)
                 var badgeCols = betterAsm.GetType("IamgriBetter.History.BadgeColours", false);
                 if (badgeCols != null)
                 {
                     var beforeGet = badgeCols.GetMethod("BeforeGet", flags);
-                    if (beforeGet != null)
+                    if (beforeGet != null && beforeGet.GetParameters().Length == 3)
                     {
                         harmony.Patch(beforeGet,
                             prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(BadgeBeforeGet_Prefix))
@@ -211,7 +224,8 @@ namespace EM2026PerfBoost.Modules
                     }
                 }
 
-                // 4. Throttle IconRecovery.BeforeTick (avoids per-tick LINQ ToArray + 3x reflection per icon)
+                // 4. Throttle routine IconRecovery.BeforeTick(Object __instance, Boolean __0) calls
+                //    while ALWAYS letting forced (__0 == true) icon recoveries run immediately
                 var iconRec = betterAsm.GetType("IamgriBetter.History.IconRecovery", false);
                 if (iconRec != null)
                 {
@@ -271,12 +285,18 @@ namespace EM2026PerfBoost.Modules
             }
         }
 
-        private static bool BadgeBeforeGet_Prefix(string __0, ref uint __2)
+        // Exact match to IamgriBetter.History.BadgeColours.BeforeGet(String __1, Boolean __2, UInt32& __6):
+        //   if (__2 || string.IsNullOrEmpty(__1)) return;
+        //   __6 = (uint)ui.Call("Theme", "TeamColour", new object[] { __1 });
+        private static bool BadgeBeforeGet_Prefix(string __0, bool __1, ref uint __2)
         {
-            if (!Plugin.CfgOptimizeIamgriBetter.Value || string.IsNullOrEmpty(__0))
+            if (!Plugin.CfgOptimizeIamgriBetter.Value)
                 return true;
 
-            // Only bypass reflection when we have a direct bound delegate to EMSkinCore.Theme.TeamColour
+            // Preserve exact original early-exit when skip flag (__2 / arg1) is true or teamId is empty!
+            if (__1 || string.IsNullOrEmpty(__0))
+                return false;
+
             var fn = _directTeamColour;
             if (fn == null)
                 return true;
@@ -284,9 +304,9 @@ namespace EM2026PerfBoost.Modules
             try
             {
                 CheckColorCacheExpiry();
-                lock (_teamColorCache)
+                lock (_badgeColourCache)
                 {
-                    if (_teamColorCache.TryGetValue(__0, out uint cached))
+                    if (_badgeColourCache.TryGetValue(__0, out uint cached))
                     {
                         __2 = cached;
                         Interlocked.Increment(ref PerfTelemetry.BetterColorCacheHits);
@@ -296,11 +316,11 @@ namespace EM2026PerfBoost.Modules
 
                 uint resolved = fn(__0);
                 __2 = resolved;
-                lock (_teamColorCache)
+                lock (_badgeColourCache)
                 {
-                    if (_teamColorCache.Count > 2048)
-                        _teamColorCache.Clear();
-                    _teamColorCache[__0] = resolved;
+                    if (_badgeColourCache.Count > 2048)
+                        _badgeColourCache.Clear();
+                    _badgeColourCache[__0] = resolved;
                 }
                 Interlocked.Increment(ref PerfTelemetry.BetterColorCacheHits);
                 return false;
@@ -311,74 +331,106 @@ namespace EM2026PerfBoost.Modules
             }
         }
 
-        private static bool TeamColor_Prefix(string __0, ref uint __1)
+        private readonly struct ColorState
         {
+            public readonly bool Track;
+            public readonly uint Before;
+
+            public ColorState(bool track, uint before)
+            {
+                Track = track;
+                Before = before;
+            }
+        }
+
+        private static bool TeamColor_Prefix(string __0, ref uint __1, out ColorState __state)
+        {
+            __state = default;
             if (!Plugin.CfgOptimizeIamgriBetter.Value || string.IsNullOrEmpty(__0))
                 return true;
 
             CheckColorCacheExpiry();
-            lock (_teamColorCache)
+            lock (_teamOverrideCache)
             {
-                if (_teamColorCache.TryGetValue(__0, out uint cached))
+                if (_teamOverrideCache.TryGetValue(__0, out uint? cached))
                 {
-                    __1 = cached;
+                    // If cached has an explicit custom override, apply it; otherwise leave Theme's __result untouched!
+                    if (cached.HasValue)
+                        __1 = cached.Value;
                     Interlocked.Increment(ref PerfTelemetry.BetterColorCacheHits);
                     return false;
                 }
             }
+
+            __state = new ColorState(true, __1);
             return true;
         }
 
-        private static void TeamColor_Postfix(string __0, uint __1)
+        private static void TeamColor_Postfix(string __0, uint __1, ColorState __state)
         {
-            if (!Plugin.CfgOptimizeIamgriBetter.Value || string.IsNullOrEmpty(__0))
+            if (!__state.Track || string.IsNullOrEmpty(__0))
                 return;
 
-            lock (_teamColorCache)
+            uint? overrideVal = __1 != __state.Before ? __1 : null;
+            lock (_teamOverrideCache)
             {
-                if (_teamColorCache.Count > 2048)
-                    _teamColorCache.Clear();
-                _teamColorCache[__0] = __1;
+                if (_teamOverrideCache.Count > 2048)
+                    _teamOverrideCache.Clear();
+                _teamOverrideCache[__0] = overrideVal;
             }
         }
 
-        private static bool TableColor_Prefix(string __0, ref uint __1)
+        private static bool TableColor_Prefix(string __0, ref uint __1, out ColorState __state)
         {
+            __state = default;
             if (!Plugin.CfgOptimizeIamgriBetter.Value || string.IsNullOrEmpty(__0))
                 return true;
 
             CheckColorCacheExpiry();
-            lock (_tableColorCache)
+            lock (_tableOverrideCache)
             {
-                if (_tableColorCache.TryGetValue(__0, out uint cached))
+                if (_tableOverrideCache.TryGetValue(__0, out uint? cached))
                 {
-                    __1 = cached;
+                    // Only overwrite __result for the user's custom-colored club/academy; never overwrite base theme colors!
+                    if (cached.HasValue)
+                        __1 = cached.Value;
                     Interlocked.Increment(ref PerfTelemetry.BetterColorCacheHits);
                     return false;
                 }
             }
+
+            __state = new ColorState(true, __1);
             return true;
         }
 
-        private static void TableColor_Postfix(string __0, uint __1)
+        private static void TableColor_Postfix(string __0, uint __1, ColorState __state)
         {
-            if (!Plugin.CfgOptimizeIamgriBetter.Value || string.IsNullOrEmpty(__0))
+            if (!__state.Track || string.IsNullOrEmpty(__0))
                 return;
 
-            lock (_tableColorCache)
+            uint? overrideVal = __1 != __state.Before ? __1 : null;
+            lock (_tableOverrideCache)
             {
-                if (_tableColorCache.Count > 2048)
-                    _tableColorCache.Clear();
-                _tableColorCache[__0] = __1;
+                if (_tableOverrideCache.Count > 2048)
+                    _tableOverrideCache.Clear();
+                _tableOverrideCache[__0] = overrideVal;
             }
         }
 
-        private static bool IconRecovery_Prefix()
+        // Exact match to IamgriBetter.History.IconRecovery.BeforeTick(Object __instance, Boolean __0):
+        // Never skip forced ticks (__1 == true); only throttle routine periodic polls to every 0.75s.
+        private static bool IconRecovery_Prefix(bool __1)
         {
             if (!Plugin.CfgOptimizeIamgriBetter.Value)
                 return true;
 
             float now = Time.unscaledTime;
+            if (__1)
+            {
+                _nextIconRecoveryTime = now + 0.75f;
+                return true;
+            }
+
             if (now < _nextIconRecoveryTime)
             {
                 Interlocked.Increment(ref PerfTelemetry.BetterIconChecksSkipped);

@@ -104,14 +104,15 @@ namespace EM2026PerfBoost.Modules
         private static void ShowWindow_Prefix(out long __state)
         {
             __state = Stopwatch.GetTimestamp();
-            // Briefly cap incremental GC slice to 2ms during tab switch so opening any tab never stutters on GC!
+            // Briefly cap incremental GC slice to <=2ms during tab switch so opening any tab never stutters on GC!
             if (Plugin.CfgSmoothIncrementalGc.Value && !Plugin.In3DMatchScene)
             {
                 try
                 {
                     if (GarbageCollector.isIncremental)
                     {
-                        GarbageCollector.incrementalTimeSliceNanoseconds = 2_000_000UL;
+                        ulong burstNs = (ulong)Math.Clamp(Math.Min(Plugin.CfgGcSliceMs.Value, 2), 1, 2) * 1_000_000UL;
+                        GarbageCollector.incrementalTimeSliceNanoseconds = burstNs;
                         _smoothBurstUntil = Time.unscaledTime + 1.0f;
                     }
                 }

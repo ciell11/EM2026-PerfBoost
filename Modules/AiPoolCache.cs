@@ -190,7 +190,7 @@ namespace EM2026PerfBoost.Modules
         {
             try
             {
-                if (_fPool == null) return;
+                if (!Plugin.CfgAiPoolCache.Value || _fPool == null) return;
                 if (_fPool.GetValue(null) != null)
                     return; // Already cached; Pool() returns immediately
 

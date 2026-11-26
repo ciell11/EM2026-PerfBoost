@@ -25,24 +25,20 @@ namespace EM2026PerfBoost.Modules
         private static IntPtr _lastInboxWindowPtr = IntPtr.Zero;
         private static long _lastInboxFingerprint = -1;
         private static string _lastInboxSlot = "";
-        private static int _lastInboxDateKey = -1;
 
         private static IntPtr _lastTalkWindowPtr = IntPtr.Zero;
         private static long _lastTalkFingerprint = -1;
         private static string _lastTalkSlot = "";
-        private static int _lastTalkDateKey = -1;
 
         public static void ResetState()
         {
             _lastInboxWindowPtr = IntPtr.Zero;
             _lastInboxFingerprint = -1;
             _lastInboxSlot = "";
-            _lastInboxDateKey = -1;
 
             _lastTalkWindowPtr = IntPtr.Zero;
             _lastTalkFingerprint = -1;
             _lastTalkSlot = "";
-            _lastTalkDateKey = -1;
 
             Interlocked.Increment(ref _emailMutationVersion);
         }
@@ -274,7 +270,6 @@ namespace EM2026PerfBoost.Modules
                 if (__instance == null) return;
                 _lastInboxWindowPtr = __instance.Pointer;
                 _lastInboxSlot = SlotController.CurrentSlot ?? "";
-                _lastInboxDateKey = CurrentDateKey();
                 _lastInboxFingerprint = ComputeInboxFingerprint(__instance);
                 Interlocked.Increment(ref PerfTelemetry.InboxRenewsExecuted);
             }
@@ -347,7 +342,6 @@ namespace EM2026PerfBoost.Modules
                 if (__instance == null) return;
                 _lastTalkWindowPtr = __instance.Pointer;
                 _lastTalkSlot = SlotController.CurrentSlot ?? "";
-                _lastTalkDateKey = CurrentDateKey();
                 _lastTalkFingerprint = ComputeTalkFingerprint();
                 Interlocked.Increment(ref PerfTelemetry.TalkRenewsExecuted);
             }
@@ -407,19 +401,6 @@ namespace EM2026PerfBoost.Modules
                 }
             }
             catch { }
-        }
-
-        private static int CurrentDateKey()
-        {
-            try
-            {
-                var d = GlobalValues.CurrentDate;
-                return d.Year * 1000 + d.DayOfYear;
-            }
-            catch
-            {
-                return -1;
-            }
         }
     }
 }
