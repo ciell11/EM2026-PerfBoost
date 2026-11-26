@@ -51,6 +51,12 @@ namespace EM2026PerfBoost.Modules
         // IconRecovery throttle
         private static float _nextIconRecoveryTime;
 
+        // CareerOptions.get_IsFrozen daily cache (avoids 4 IL2CPP string allocs + DataTeams.Get per AI call!)
+        private static int _frozenCacheDayKey = -1;
+        private static string _frozenCacheSlot = "";
+        private static bool _frozenCacheValid;
+        private static bool _frozenCacheVal;
+
         public static bool IsAttached => _attachedBetterAsm != null;
 
         public static void ResetState()
@@ -59,6 +65,9 @@ namespace EM2026PerfBoost.Modules
             _lastMenuUiActive = false;
             _nextMenuRefreshTime = 0f;
             _nextIconRecoveryTime = 0f;
+            _frozenCacheValid = false;
+            _frozenCacheDayKey = -1;
+            _frozenCacheSlot = "";
             InvalidateColorCaches();
         }
 
@@ -239,6 +248,26 @@ namespace EM2026PerfBoost.Modules
                             });
                         patched++;
                     }
+                }
+
+                // 5. Cache CareerOptions.get_IsFrozen per (day, slot) so AI passes don't allocate 4 IL2CPP strings + DataTeams.Get per call
+                var careerOpts = betterAsm.GetType("IamgriBetter.History.CareerOptions", false);
+                if (careerOpts != null)
+                {
+                    var getFrozen = careerOpts.GetMethod("get_IsFrozen", flags);
+                    if (getFrozen != null)
+                    {
+                        harmony.Patch(getFrozen,
+                            prefix: new HarmonyMethod(typeof(Better130Optimizer), nameof(CareerIsFrozen_Prefix)) { priority = Priority.First },
+                            postfix: new HarmonyMethod(typeof(Better130Optimizer), nameof(CareerIsFrozen_Postfix)));
+                        patched++;
+                    }
+
+                    var invFrozen = new HarmonyMethod(typeof(Better130Optimizer), nameof(InvalidateFrozenCache));
+                    var created = careerOpts.GetMethod("Created", flags);
+                    if (created != null) harmony.Patch(created, postfix: invFrozen);
+                    var reset = careerOpts.GetMethod("ResetContract", flags);
+                    if (reset != null) harmony.Patch(reset, postfix: invFrozen);
                 }
 
                 Plugin.Logger.LogMessage(
@@ -444,6 +473,57 @@ namespace EM2026PerfBoost.Modules
         private static void OnColorInvalidated()
         {
             InvalidateColorCaches();
+        }
+
+        private static void InvalidateFrozenCache()
+        {
+            _frozenCacheValid = false;
+        }
+
+        private static bool CareerIsFrozen_Prefix(ref bool __result, out bool __state)
+        {
+            __state = false;
+            if (!Plugin.CfgOptimizeIamgriBetter.Value)
+                return true;
+
+            try
+            {
+                var d = GlobalValues.CurrentDate;
+                int dayKey = d.Year * 1000 + d.DayOfYear;
+                string slot = SlotController.CurrentSlot ?? "";
+                if (string.IsNullOrEmpty(slot))
+                    return true;
+
+                if (_frozenCacheValid && dayKey == _frozenCacheDayKey && string.Equals(slot, _frozenCacheSlot, StringComparison.Ordinal))
+                {
+                    __result = _frozenCacheVal;
+                    return false;
+                }
+
+                __state = true;
+                return true;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static void CareerIsFrozen_Postfix(bool __result, bool __state)
+        {
+            if (!__state) return;
+            try
+            {
+                var d = GlobalValues.CurrentDate;
+                string slot = SlotController.CurrentSlot ?? "";
+                if (string.IsNullOrEmpty(slot)) return;
+
+                _frozenCacheDayKey = d.Year * 1000 + d.DayOfYear;
+                _frozenCacheSlot = slot;
+                _frozenCacheVal = __result;
+                _frozenCacheValid = true;
+            }
+            catch { }
         }
 
         private static void CheckColorCacheExpiry()

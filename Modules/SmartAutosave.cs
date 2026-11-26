@@ -76,12 +76,12 @@ namespace EM2026PerfBoost.Modules
                     return;
                 }
 
-                // Run BEFORE IamgriBetter.History.ProfileEnhancements.MatchCheckpoint (Normal priority)
+                // Run BEFORE IamgriBetter.History.ProfileEnhancements.MatchCheckpoint
                 coreHarmony.Patch(
                     savePre,
                     prefix: new HarmonyMethod(typeof(SmartAutosave), nameof(SavePre_Prefix))
                     {
-                        priority = Priority.High
+                        priority = Priority.First
                     });
 
                 var finish = autosaveType.GetMethod("Finish", flags);

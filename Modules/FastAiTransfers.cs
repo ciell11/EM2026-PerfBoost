@@ -8,23 +8,27 @@ using HarmonyLib;
 namespace EM2026PerfBoost.Modules
 {
     /// <summary>
-    /// Accelerates AiAcquisitionPasses.AITransfers with 100% pure managed Harmony patches
-    /// (ZERO native INativeDetour stacking, zero risk of 0xC0000005 access violations) and
-    /// 100% identical AI transfer behavior:
+    /// Accelerates AiAcquisitionPasses.AITransfers and daily AI listing passes with 100% pure managed
+    /// Harmony patches (ZERO native INativeDetour stacking, zero risk of 0xC0000005 access violations):
     ///
     /// 1. Prunes dormant/folded and locked clubs from _scratchPriorityTeams and _scratchOtherTeams
     ///    before the O(teams * players) candidate scan.
-    /// 2. Memoizes 8 hot pure EMSkinCore C# calculations strictly during the active AITransfers pass
-    ///    (single-thread scoped to the AITransfers thread, invalidated immediately on any offer/deal/
-    ///    pricelist mutation, and guaranteed cleared in a Harmony Finalizer):
-    ///      - PlayerMoney.Value(DataPlayer, int)
-    ///      - PlayerMoney.Wage(DataPlayer)
-    ///      - AiIdentity.StarRank(DataPlayer, DataTeam)
-    ///      - MarketView.ClubRatio(DataPlayer, DataTeam)
-    ///      - ClubPlan.WantsOut(DataPlayer)
+    /// 2. Smart Empty-Scan Cooldown (optional, default 3 days, configurable via EmptyScanSkipDays):
+    ///    - NEVER touches _scratchPriorityTeams (urgent <5-player teams ALWAYS scan every single day!)
+    ///    - NEVER touches the user's club or any team that had >=1 candidate yesterday.
+    ///    - For _scratchOtherTeams that scanned all ~6,000 players and found ZERO eligible candidates,
+    ///      staggers their next redundant re-scan by EmptyScanSkipDays (default 3 days) — and
+    ///      IMMEDIATELY wakes them up early if their roster shrinks, budget rises, month changes,
+    ///      or total world player count changes (regens/retirements).
+    /// 3. Memoizes 11 hot pure EMSkinCore C# calculations strictly during active AI passes
+    ///    (single-thread scoped with re-entrant depth, instant epoch invalidation on any offer/deal/
+    ///    pricelist mutation, guaranteed cleanup in a Harmony Finalizer):
+    ///      - PlayerMoney.Value(DataPlayer, int) & PlayerMoney.Wage(DataPlayer)
+    ///      - AiIdentity.StarRank(DataPlayer, DataTeam) & AiIdentity.AcademyGate (non-academy fast-path)
+    ///      - MarketView.ClubRatio(DataPlayer, DataTeam) & ClubPlan.WantsOut(DataPlayer)
     ///      - AiSight.StarsError(DataPlayer, DataTeam)
-    ///      - Dormant.Is(DataTeam)
-    ///      - LockedClub.Blocks(DataUser, DataTeam) (negative fast-path for non-locked clubs/players)
+    ///      - SquadNeeds.NeedOf(DataTeam) & SquadNeeds.Stars(DataPlayer)
+    ///      - Dormant.Is(DataTeam) & LockedClub.Blocks(DataUser, DataTeam)
     /// </summary>
     internal static class FastAiTransfers
     {
@@ -63,6 +67,22 @@ namespace EM2026PerfBoost.Modules
             public override int GetHashCode() => HashCode.Combine(Ptr, Val);
         }
 
+        private readonly struct EmptyScanEntry
+        {
+            public readonly int NextScanDayKey;
+            public readonly int MonthKey;
+            public readonly int SquadCount;
+            public readonly int Budget;
+
+            public EmptyScanEntry(int nextScanDayKey, int monthKey, int squadCount, int budget)
+            {
+                NextScanDayKey = nextScanDayKey;
+                MonthKey = monthKey;
+                SquadCount = squadCount;
+                Budget = budget;
+            }
+        }
+
         private static TeamPredicate _isDormant;
         private static BoolGetter _isLockedActive;
         private static TeamPredicate _isLockedClub;
@@ -71,10 +91,11 @@ namespace EM2026PerfBoost.Modules
         // Single-thread ownership during active AI passes (re-entrant depth supports nested/chained passes)
         private static int _aiTransfersThreadId;
         private static int _activePassDepth;
+        private static bool _isMainAiTransfersPass;
         private static long _mutationEpoch = 1;
         private static long _cachedEpoch = -1;
         private static long _passStartTicks;
-        private static int _passCount;
+        private static int _mainPassCount;
         private static string _passLockedClubId;
 
         // Per-pass pure managed caches (ONLY accessed by _aiTransfersThreadId, cleared on exit)
@@ -84,24 +105,45 @@ namespace EM2026PerfBoost.Modules
         private static readonly Dictionary<PtrPair, float> _clubRatioCache = new(4096);
         private static readonly Dictionary<IntPtr, bool> _wantsOutCache = new(4096);
         private static readonly Dictionary<PtrPair, float> _starsErrorCache = new(4096);
+        private static readonly Dictionary<IntPtr, object> _needOfCache = new(512);
+        private static readonly Dictionary<IntPtr, float> _starsCache = new(4096);
+        private static readonly Dictionary<IntPtr, byte> _teamIsAcademyCache = new(512);
         private static readonly Dictionary<IntPtr, bool> _dormantPtrCache = new(512);
         private static readonly Dictionary<IntPtr, byte> _lockedTeamPtrCache = new(512);
         private static readonly Dictionary<IntPtr, byte> _lockedUserPtrCache = new(4096);
 
+        // Cross-day empty-scan cooldown for _scratchOtherTeams ONLY (never touches _scratchPriorityTeams!)
+        private static readonly Dictionary<IntPtr, EmptyScanEntry> _emptyOtherCooldowns = new(512);
+        private static readonly List<(IntPtr ptr, int squadCount, int budget)> _scannedOtherThisPass = new(320);
+        private static readonly HashSet<IntPtr> _teamsWithCandidatesThisPass = new(64);
+        private static string _emptyCooldownSlot = "";
+        private static int _emptyCooldownWorldPlayers = -1;
+        private static int _lastEmptySkipped;
+        private static int _lastDormantSkipped;
+
         private static long _passHitsValue, _passHitsWage, _passHitsStarRank, _passHitsClubRatio;
-        private static long _passHitsWantsOut, _passHitsStarsError, _passHitsDormant, _passHitsLocked;
+        private static long _passHitsWantsOut, _passHitsStarsError, _passHitsNeed, _passHitsStars;
+        private static long _passHitsAcad, _passHitsDormant, _passHitsLocked;
 
         public static void InstallGamePatches(Harmony harmony)
         {
             try
             {
-                // Scope pure managed memoization across ALL heavy daily AI transfer & listing passes!
-                var passPre = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Prefix)) { priority = Priority.First };
-                var passFin = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiTransfers_Finalizer)) { priority = Priority.Last };
+                // Scope pure managed memoization across ALL heavy daily AI transfer & listing passes
+                var mainPre = new HarmonyMethod(typeof(FastAiTransfers), nameof(MainAiTransfers_Prefix)) { priority = Priority.First };
+                var passPre = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiPass_Prefix)) { priority = Priority.First };
+                var passFin = new HarmonyMethod(typeof(FastAiTransfers), nameof(AiPass_Finalizer)) { priority = Priority.Last };
+
                 int scopedPasses = 0;
-                (Type t, string m)[] heavyPasses =
+                var aiTransfers = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers));
+                if (aiTransfers != null)
                 {
-                    (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers)),
+                    harmony.Patch(aiTransfers, prefix: mainPre, finalizer: passFin);
+                    scopedPasses++;
+                }
+
+                (Type t, string m)[] secondaryPasses =
+                {
                     (typeof(AiListingPasses), nameof(AiListingPasses.AIListedPlayerInterestPass)),
                     (typeof(AiListingPasses), nameof(AiListingPasses.AIPricelistInterestPass)),
                     (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AIOptimisationPass)),
@@ -109,7 +151,7 @@ namespace EM2026PerfBoost.Modules
                     (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITopFreeAgentPickupPass)),
                     (typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AIYouthProspectPickupPass)),
                 };
-                foreach (var (pt, pm) in heavyPasses)
+                foreach (var (pt, pm) in secondaryPasses)
                 {
                     try
                     {
@@ -123,16 +165,33 @@ namespace EM2026PerfBoost.Modules
                     catch { }
                 }
 
-                var bucketPost = new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAITransfersBuckets_Postfix)) { priority = Priority.Last };
                 var buildBuckets = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.BuildAITransfersBuckets));
                 if (buildBuckets != null)
-                    harmony.Patch(buildBuckets, postfix: bucketPost);
+                {
+                    harmony.Patch(
+                        buildBuckets,
+                        postfix: new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAITransfersBuckets_Postfix)) { priority = Priority.Last });
+                }
 
                 var buildOptBuckets = AccessTools.Method(typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.BuildAIOptimisationBuckets));
                 if (buildOptBuckets != null)
-                    harmony.Patch(buildOptBuckets, postfix: bucketPost);
+                {
+                    harmony.Patch(
+                        buildOptBuckets,
+                        postfix: new HarmonyMethod(typeof(FastAiTransfers), nameof(BuildAIOptimisationBuckets_Postfix)) { priority = Priority.Last });
+                }
 
-                Plugin.Logger.LogMessage($"[FastAiTransfers] Scoped memoization active on {scopedPasses}/7 daily AI passes + dormant/locked bucket pruning.");
+                // Track which teams actually had >=1 candidate during AITransfers (for empty-scan cooldown)
+                var rolePick = AccessTools.Method(typeof(AiCandidateSelection), nameof(AiCandidateSelection.RoleAwarePickPlayer));
+                if (rolePick != null)
+                {
+                    harmony.Patch(
+                        rolePick,
+                        prefix: new HarmonyMethod(typeof(FastAiTransfers), nameof(RoleAwarePick_Prefix)) { priority = Priority.First });
+                }
+
+                Plugin.Logger.LogMessage(
+                    $"[FastAiTransfers] Scoped memoization active on {scopedPasses}/7 daily AI passes + bucket pruning (EmptyScanSkipDays={Plugin.CfgEmptyScanSkipDays.Value}).");
 
                 var buildPool = AccessTools.Method(typeof(AiCandidateSelection), nameof(AiCandidateSelection.BuildAvailablePlayerPool));
                 if (buildPool != null)
@@ -219,7 +278,7 @@ namespace EM2026PerfBoost.Modules
                     memoHooks++;
                 }
 
-                // Pure managed Harmony memoization on heavy EMSkinCore C# static helpers
+                // Pure managed Harmony memoization on 9 additional hot EMSkinCore C# static helpers
                 if (TryPatchCore(coreHarmony, coreAsm, "PlayerMoney", "Value", new[] { typeof(DataPlayer), typeof(int) },
                     nameof(PlayerMoney_Value_Prefix), nameof(PlayerMoney_Value_Postfix)))
                     memoHooks++;
@@ -244,8 +303,27 @@ namespace EM2026PerfBoost.Modules
                     nameof(AiSight_StarsError_Prefix), nameof(AiSight_StarsError_Postfix)))
                     memoHooks++;
 
+                if (TryPatchCore(coreHarmony, coreAsm, "SquadNeeds", "NeedOf", new[] { typeof(DataTeam) },
+                    nameof(SquadNeeds_NeedOf_Prefix), nameof(SquadNeeds_NeedOf_Postfix)))
+                    memoHooks++;
+
+                if (TryPatchCore(coreHarmony, coreAsm, "SquadNeeds", "Stars", new[] { typeof(DataPlayer) },
+                    nameof(SquadNeeds_Stars_Prefix), nameof(SquadNeeds_Stars_Postfix)))
+                    memoHooks++;
+
+                // Fast-path AiIdentity.AcademyGate for confirmed non-academy clubs (skips team.IsAcademy IL2CPP icall!)
+                var aiIdType = coreAsm.GetType("AiIdentity", false);
+                var acadGate = aiIdType?.GetMethod("AcademyGate", flags);
+                if (acadGate != null && acadGate.GetParameters().Length == 3)
+                {
+                    coreHarmony.Patch(
+                        acadGate,
+                        prefix: new HarmonyMethod(typeof(FastAiTransfers), nameof(AiIdentity_AcademyGate_Prefix)) { priority = Priority.First });
+                    memoHooks++;
+                }
+
                 Plugin.Logger.LogMessage(
-                    $"[FastAiTransfers] Bound to EMSkinCore (Dormant={_isDormant != null}, LockedClub={_isLockedClub != null}, SafeManagedMemoHooks={memoHooks}/8).");
+                    $"[FastAiTransfers] Bound to EMSkinCore (Dormant={_isDormant != null}, LockedClub={_isLockedClub != null}, SafeManagedMemoHooks={memoHooks}/11).");
             }
             catch (Exception ex)
             {
@@ -286,6 +364,7 @@ namespace EM2026PerfBoost.Modules
         {
             Volatile.Write(ref _activePassDepth, 0);
             Volatile.Write(ref _aiTransfersThreadId, 0);
+            _isMainAiTransfersPass = false;
             ResetState();
         }
 
@@ -295,9 +374,15 @@ namespace EM2026PerfBoost.Modules
             if (Volatile.Read(ref _aiTransfersThreadId) == 0)
             {
                 ClearAllCaches(-1);
+                _teamIsAcademyCache.Clear();
                 _dormantPtrCache.Clear();
                 _lockedTeamPtrCache.Clear();
                 _lockedUserPtrCache.Clear();
+                _emptyOtherCooldowns.Clear();
+                _scannedOtherThisPass.Clear();
+                _teamsWithCandidatesThisPass.Clear();
+                _emptyCooldownSlot = "";
+                _emptyCooldownWorldPlayers = -1;
             }
         }
 
@@ -322,6 +407,8 @@ namespace EM2026PerfBoost.Modules
             _clubRatioCache.Clear();
             _wantsOutCache.Clear();
             _starsErrorCache.Clear();
+            _needOfCache.Clear();
+            _starsCache.Clear();
             _lockedUserPtrCache.Clear();
             _cachedEpoch = newEpoch;
         }
@@ -334,7 +421,10 @@ namespace EM2026PerfBoost.Modules
                 Interlocked.Increment(ref _mutationEpoch);
         }
 
-        private static void AiTransfers_Prefix()
+        private static void MainAiTransfers_Prefix() => BeginPass(isMainAiTransfers: true);
+        private static void AiPass_Prefix() => BeginPass(isMainAiTransfers: false);
+
+        private static void BeginPass(bool isMainAiTransfers)
         {
             try
             {
@@ -346,6 +436,8 @@ namespace EM2026PerfBoost.Modules
                 if (existingTid == tid && _activePassDepth > 0)
                 {
                     _activePassDepth++;
+                    if (isMainAiTransfers)
+                        _isMainAiTransfersPass = true;
                     return;
                 }
                 if (existingTid != 0 && existingTid != tid)
@@ -353,8 +445,17 @@ namespace EM2026PerfBoost.Modules
 
                 long epoch = Interlocked.Increment(ref _mutationEpoch);
                 ClearAllCaches(epoch);
+                _teamIsAcademyCache.Clear();
                 _dormantPtrCache.Clear();
                 _lockedTeamPtrCache.Clear();
+
+                if (isMainAiTransfers)
+                {
+                    _scannedOtherThisPass.Clear();
+                    _teamsWithCandidatesThisPass.Clear();
+                    _lastEmptySkipped = 0;
+                    _lastDormantSkipped = 0;
+                }
 
                 _passLockedClubId = null;
                 if (_fLockedClubId != null)
@@ -364,16 +465,18 @@ namespace EM2026PerfBoost.Modules
                 }
 
                 _passHitsValue = _passHitsWage = _passHitsStarRank = _passHitsClubRatio = 0;
-                _passHitsWantsOut = _passHitsStarsError = _passHitsDormant = _passHitsLocked = 0;
+                _passHitsWantsOut = _passHitsStarsError = _passHitsNeed = _passHitsStars = 0;
+                _passHitsAcad = _passHitsDormant = _passHitsLocked = 0;
                 _passStartTicks = Stopwatch.GetTimestamp();
 
+                _isMainAiTransfersPass = isMainAiTransfers;
                 _activePassDepth = 1;
                 Volatile.Write(ref _aiTransfersThreadId, tid);
             }
             catch { }
         }
 
-        private static void AiTransfers_Finalizer()
+        private static void AiPass_Finalizer()
         {
             try
             {
@@ -384,6 +487,8 @@ namespace EM2026PerfBoost.Modules
                 if (--_activePassDepth > 0)
                     return;
 
+                bool wasMain = _isMainAiTransfersPass;
+                _isMainAiTransfersPass = false;
                 _activePassDepth = 0;
                 Volatile.Write(ref _aiTransfersThreadId, 0);
 
@@ -392,27 +497,87 @@ namespace EM2026PerfBoost.Modules
                     : 0;
 
                 long totalHits = _passHitsValue + _passHitsWage + _passHitsStarRank + _passHitsClubRatio
-                    + _passHitsWantsOut + _passHitsStarsError + _passHitsDormant + _passHitsLocked;
+                    + _passHitsWantsOut + _passHitsStarsError + _passHitsNeed + _passHitsStars
+                    + _passHitsAcad + _passHitsDormant + _passHitsLocked;
 
                 if (totalHits > 0)
                     Interlocked.Add(ref PerfTelemetry.AiMemoHitsTotal, totalHits);
 
-                int passNum = Interlocked.Increment(ref _passCount);
-                if (passNum == 1 || passNum % 40 == 0)
+                if (wasMain)
                 {
-                    Plugin.Logger.LogMessage(
-                        $"[FastAiTransfers] Pass #{passNum}: {elapsedMs}ms | prio {PerfTelemetry.LastPrioBefore}->{PerfTelemetry.LastPrioAfter}, other {PerfTelemetry.LastOtherBefore}->{PerfTelemetry.LastOtherAfter} | hits: Value={_passHitsValue}, Wage={_passHitsWage}, StarRank={_passHitsStarRank}, Ratio={_passHitsClubRatio}, WantsOut={_passHitsWantsOut}, Err={_passHitsStarsError}, Dormant={_passHitsDormant}, Locked={_passHitsLocked}");
+                    UpdateEmptyScanCooldowns();
+
+                    int mainNum = Interlocked.Increment(ref _mainPassCount);
+                    if (mainNum <= 2 || mainNum % 10 == 0)
+                    {
+                        Plugin.Logger.LogMessage(
+                            $"[FastAiTransfers] AITransfers #{mainNum}: {elapsedMs}ms | prio {PerfTelemetry.LastPrioBefore}->{PerfTelemetry.LastPrioAfter}, other {PerfTelemetry.LastOtherBefore}->{PerfTelemetry.LastOtherAfter} (dormant={_lastDormantSkipped}, emptySkip={_lastEmptySkipped}) | hits: Dormant={_passHitsDormant}, Acad={_passHitsAcad}, Need={_passHitsNeed}, Stars={_passHitsStars}, Val={_passHitsValue}, Wage={_passHitsWage}, Ratio={_passHitsClubRatio}, Err={_passHitsStarsError}");
+                    }
                 }
 
                 ClearAllCaches(-1);
+                _teamIsAcademyCache.Clear();
                 _dormantPtrCache.Clear();
                 _lockedTeamPtrCache.Clear();
                 _lockedUserPtrCache.Clear();
             }
             catch
             {
+                _isMainAiTransfersPass = false;
                 _activePassDepth = 0;
                 Volatile.Write(ref _aiTransfersThreadId, 0);
+            }
+        }
+
+        private static void RoleAwarePick_Prefix(DataTeam __0, Il2CppSystem.Collections.Generic.List<DataPlayer> __1)
+        {
+            if (_isMainAiTransfersPass && IsActiveOnCurrentThread() && __0 != null && __1 != null && __1.Count > 0)
+            {
+                _teamsWithCandidatesThisPass.Add(__0.Pointer);
+            }
+        }
+
+        private static void UpdateEmptyScanCooldowns()
+        {
+            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 7);
+            if (skipDays <= 0 || _scannedOtherThisPass.Count == 0)
+            {
+                _scannedOtherThisPass.Clear();
+                _teamsWithCandidatesThisPass.Clear();
+                return;
+            }
+
+            try
+            {
+                var d = GlobalValues.CurrentDate;
+                int dayKey = d.Year * 1000 + d.DayOfYear;
+                int monthKey = d.Year * 12 + d.Month;
+
+                for (int i = 0; i < _scannedOtherThisPass.Count; i++)
+                {
+                    var (ptr, squadCount, budget) = _scannedOtherThisPass[i];
+                    if (_teamsWithCandidatesThisPass.Contains(ptr))
+                    {
+                        // Team had eligible candidates -> never put on cooldown, re-check immediately tomorrow
+                        _emptyOtherCooldowns.Remove(ptr);
+                    }
+                    else
+                    {
+                        // Team scanned all ~6,000 players and found ZERO eligible candidates.
+                        // Stagger cooldown (1..skipDays on first encounter, skipDays afterwards) to keep daily frame times flat!
+                        bool existed = _emptyOtherCooldowns.ContainsKey(ptr);
+                        int stagger = existed
+                            ? skipDays
+                            : 1 + (int)((uint)ptr.GetHashCode() % (uint)skipDays);
+                        _emptyOtherCooldowns[ptr] = new EmptyScanEntry(dayKey + stagger, monthKey, squadCount, budget);
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                _scannedOtherThisPass.Clear();
+                _teamsWithCandidatesThisPass.Clear();
             }
         }
 
@@ -566,6 +731,80 @@ namespace EM2026PerfBoost.Modules
                 _starsErrorCache[new PtrPair(__0.Pointer, __1.Pointer)] = __result;
         }
 
+        private static bool SquadNeeds_NeedOf_Prefix(DataTeam __0, ref object __result, out bool __state)
+        {
+            __state = false;
+            if (!IsActiveOnCurrentThread() || __0 == null)
+                return true;
+
+            EnsureEpochFresh();
+            if (_needOfCache.TryGetValue(__0.Pointer, out object cached))
+            {
+                _passHitsNeed++;
+                __result = cached;
+                return false;
+            }
+
+            __state = true;
+            return true;
+        }
+
+        private static void SquadNeeds_NeedOf_Postfix(DataTeam __0, object __result, bool __state)
+        {
+            if (__state && IsActiveOnCurrentThread() && __0 != null && __result != null && Volatile.Read(ref _mutationEpoch) == _cachedEpoch)
+                _needOfCache[__0.Pointer] = __result;
+        }
+
+        private static bool SquadNeeds_Stars_Prefix(DataPlayer __0, ref float __result, out bool __state)
+        {
+            __state = false;
+            if (!IsActiveOnCurrentThread() || __0 == null)
+                return true;
+
+            EnsureEpochFresh();
+            if (_starsCache.TryGetValue(__0.Pointer, out float cached))
+            {
+                _passHitsStars++;
+                __result = cached;
+                return false;
+            }
+
+            __state = true;
+            return true;
+        }
+
+        private static void SquadNeeds_Stars_Postfix(DataPlayer __0, float __result, bool __state)
+        {
+            if (__state && IsActiveOnCurrentThread() && __0 != null && Volatile.Read(ref _mutationEpoch) == _cachedEpoch)
+                _starsCache[__0.Pointer] = __result;
+        }
+
+        // Exact match to EMSkinCore.AiIdentity.AcademyGate(DataUser __0, DataTeam __1, ref bool __result) -> bool:
+        // When !__1.IsAcademy, AcademyGate returns true (continue to vanilla) without touching __result!
+        // Caching team.IsAcademy per IntPtr skips the IL2CPP property icall for ~85-90% of teams.
+        private static bool AiIdentity_AcademyGate_Prefix(DataUser __0, DataTeam __1, ref bool __result)
+        {
+            if (!IsActiveOnCurrentThread() || __0 == null || __1 == null)
+                return true;
+
+            IntPtr teamPtr = __1.Pointer;
+            if (!_teamIsAcademyCache.TryGetValue(teamPtr, out byte isAcad))
+            {
+                try { isAcad = __1.IsAcademy ? (byte)1 : (byte)0; }
+                catch { isAcad = 1; }
+                _teamIsAcademyCache[teamPtr] = isAcad;
+            }
+
+            if (isAcad == 0)
+            {
+                _passHitsAcad++;
+                __result = true; // return true from AcademyGate Prefix => let vanilla proceed unchanged
+                return false;
+            }
+
+            return true;
+        }
+
         private static bool Dormant_Is_Prefix(DataTeam __0, ref bool __result)
         {
             if (!IsActiveOnCurrentThread())
@@ -635,9 +874,19 @@ namespace EM2026PerfBoost.Modules
             return false;
         }
 
-        // ==================== Bucket Pruning & Pool Telemetry ====================
+        // ==================== Bucket Pruning, Empty-Scan Cooldown & Pool Telemetry ====================
+
+        private static void BuildAIOptimisationBuckets_Postfix()
+        {
+            PruneBucketsInternal(applyEmptyCooldown: false);
+        }
 
         private static void BuildAITransfersBuckets_Postfix()
+        {
+            PruneBucketsInternal(applyEmptyCooldown: true);
+        }
+
+        private static void PruneBucketsInternal(bool applyEmptyCooldown)
         {
             try
             {
@@ -654,26 +903,35 @@ namespace EM2026PerfBoost.Modules
                 int prioBefore = prio != null ? prio.Count : 0;
                 int otherBefore = other != null ? other.Count : 0;
 
-                if (isDormant == null && isLockedClub == null)
+                bool checkLocked = isLockedActive != null && isLockedClub != null && isLockedActive();
+                TeamPredicate lockedPred = checkLocked ? isLockedClub : null;
+
+                int prunedPrio = (isDormant != null || lockedPred != null)
+                    ? PruneDormantLocked(prio, isDormant, lockedPred)
+                    : 0;
+                int prunedOtherDormant = (isDormant != null || lockedPred != null)
+                    ? PruneDormantLocked(other, isDormant, lockedPred)
+                    : 0;
+
+                int prunedOtherEmpty = 0;
+                if (applyEmptyCooldown && _isMainAiTransfersPass && other != null && other.Count > 0)
                 {
-                    PerfTelemetry.RecordBucketPrune(prioBefore, prioBefore, otherBefore, otherBefore, 0);
-                    return;
+                    prunedOtherEmpty = ApplyEmptyScanCooldown(other);
                 }
 
-                bool checkLocked = isLockedActive != null && isLockedClub != null && isLockedActive();
-
-                int prunedPrio = PruneList(prio, isDormant, checkLocked ? isLockedClub : null);
-                int prunedOther = PruneList(other, isDormant, checkLocked ? isLockedClub : null);
+                _lastDormantSkipped = prunedPrio + prunedOtherDormant;
+                _lastEmptySkipped = prunedOtherEmpty;
 
                 PerfTelemetry.RecordBucketPrune(
                     prioBefore, prioBefore - prunedPrio,
-                    otherBefore, otherBefore - prunedOther,
-                    prunedPrio + prunedOther);
+                    otherBefore, otherBefore - prunedOtherDormant - prunedOtherEmpty,
+                    prunedPrio + prunedOtherDormant,
+                    prunedOtherEmpty);
             }
             catch { }
         }
 
-        private static int PruneList(
+        private static int PruneDormantLocked(
             Il2CppSystem.Collections.Generic.List<DataTeam> list,
             TeamPredicate isDormant,
             TeamPredicate isLockedClub)
@@ -705,6 +963,98 @@ namespace EM2026PerfBoost.Modules
             }
 
             return pruned;
+        }
+
+        private static int ApplyEmptyScanCooldown(Il2CppSystem.Collections.Generic.List<DataTeam> other)
+        {
+            int skipDays = Math.Clamp(Plugin.CfgEmptyScanSkipDays.Value, 0, 7);
+            if (skipDays <= 0)
+                return 0;
+
+            string slot = "";
+            int dayKey = 0;
+            int monthKey = 0;
+            int worldPlayers = 0;
+            string myTeamId = "";
+
+            try
+            {
+                slot = SlotController.CurrentSlot ?? "";
+                var d = GlobalValues.CurrentDate;
+                dayKey = d.Year * 1000 + d.DayOfYear;
+                monthKey = d.Year * 12 + d.Month;
+                myTeamId = GlobalValues.TeamId ?? "";
+
+                var allPlayers = DataPlayers.List?.TryCast<Il2CppSystem.Collections.Generic.List<DataPlayer>>();
+                worldPlayers = allPlayers != null ? allPlayers.Count : 0;
+            }
+            catch
+            {
+                return 0;
+            }
+
+            // Reset cooldown table if slot changed or total world player count changed (e.g., regen/retirement wave)
+            if (!string.Equals(slot, _emptyCooldownSlot, StringComparison.Ordinal)
+                || (_emptyCooldownWorldPlayers > 0 && Math.Abs(worldPlayers - _emptyCooldownWorldPlayers) >= 20))
+            {
+                _emptyOtherCooldowns.Clear();
+                _emptyCooldownSlot = slot;
+                _emptyCooldownWorldPlayers = worldPlayers;
+            }
+            else if (_emptyCooldownWorldPlayers <= 0)
+            {
+                _emptyCooldownWorldPlayers = worldPlayers;
+            }
+
+            int skipped = 0;
+            _scannedOtherThisPass.Clear();
+
+            for (int i = other.Count - 1; i >= 0; i--)
+            {
+                var team = other[i];
+                if (team == null) continue;
+
+                IntPtr ptr = team.Pointer;
+                int squadCount = 0;
+                int budget = 0;
+
+                try
+                {
+                    if (!string.IsNullOrEmpty(myTeamId) && string.Equals(team.Id, myTeamId, StringComparison.Ordinal))
+                        continue;
+
+                    var players = team.GetAllPlayers();
+                    squadCount = players != null ? players.Count : 0;
+                    budget = team.TransferBudget;
+                }
+                catch
+                {
+                    continue;
+                }
+
+                // Never skip an under-5 squad even if it landed in other!
+                if (squadCount < 5)
+                {
+                    _emptyOtherCooldowns.Remove(ptr);
+                    continue;
+                }
+
+                if (_emptyOtherCooldowns.TryGetValue(ptr, out var entry)
+                    && dayKey < entry.NextScanDayKey
+                    && monthKey == entry.MonthKey
+                    && squadCount >= entry.SquadCount
+                    && budget <= entry.Budget)
+                {
+                    other.RemoveAt(i);
+                    skipped++;
+                }
+                else
+                {
+                    _scannedOtherThisPass.Add((ptr, squadCount, budget));
+                }
+            }
+
+            return skipped;
         }
 
         private static void BuildPool_Pre(out long __state) => __state = Stopwatch.GetTimestamp();

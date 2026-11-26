@@ -47,11 +47,13 @@ namespace EM2026PerfBoost.Modules
                     harmony.Patch(nextDayDate, prefix: new HarmonyMethod(typeof(DaySpeedBooster), nameof(NextDayDate_Prefix)));
                 }
 
-                // Lightweight ContractEngine sub-pass telemetry (helps diagnose 5-8s day ticks empirically)
+                // Lightweight ContractEngine sub-pass telemetry (helps diagnose day ticks empirically)
                 PatchSubPass(harmony, typeof(ContractEngine), nameof(ContractEngine.RunDailyAiPasses), nameof(DailyAi_Pre), nameof(DailyAi_Post));
                 PatchSubPass(harmony, typeof(ContractEngine), nameof(ContractEngine.TickAiSquadMaintenance), nameof(Maint_Pre), nameof(Maint_Post));
                 PatchSubPass(harmony, typeof(AiAcquisitionPasses), nameof(AiAcquisitionPasses.AITransfers), nameof(AiTransfers_Pre), nameof(AiTransfers_Post));
                 PatchSubPass(harmony, typeof(AiListingPasses), nameof(AiListingPasses.AIListedPlayerInterestPass), nameof(ListedPass_Pre), nameof(ListedPass_Post));
+                PatchSubPass(harmony, typeof(AiRosterLifecyclePasses), nameof(AiRosterLifecyclePasses.AIContractRenewalPass), nameof(RenewPass_Pre), nameof(RenewPass_Post));
+                PatchSubPass(harmony, typeof(AiRosterLifecyclePasses), nameof(AiRosterLifecyclePasses.TickPlayerContractExpiries), nameof(ExpiriesPass_Pre), nameof(ExpiriesPass_Post));
 
                 Plugin.Logger.LogMessage($"[DaySpeedBooster] Active (FastDayTransitions={Plugin.CfgFastDayTransitions.Value}, DayPauseSpeed={Plugin.CfgDayPauseSpeed.Value:0.#}x).");
             }
@@ -223,6 +225,12 @@ namespace EM2026PerfBoost.Modules
 
         private static void ListedPass_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
         private static void ListedPass_Post(long __state) => PerfTelemetry.AddSubPass(3, ElapsedMs(__state));
+
+        private static void RenewPass_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void RenewPass_Post(long __state) => PerfTelemetry.AddSubPass(5, ElapsedMs(__state));
+
+        private static void ExpiriesPass_Pre(out long __state) => __state = Stopwatch.GetTimestamp();
+        private static void ExpiriesPass_Post(long __state) => PerfTelemetry.AddSubPass(6, ElapsedMs(__state));
 
         private static long ElapsedMs(long start) =>
             start > 0 ? (Stopwatch.GetTimestamp() - start) * 1000L / Stopwatch.Frequency : 0;

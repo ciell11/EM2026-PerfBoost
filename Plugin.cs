@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.4.0";
+        public const string PluginVersion = "1.4.1";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -50,6 +50,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<bool> CfgAiPoolCache;
         internal static ConfigEntry<int> CfgAiPoolMaxCacheDays;
         internal static ConfigEntry<bool> CfgFastAiTransfers;
+        internal static ConfigEntry<int> CfgEmptyScanSkipDays;
         internal static ConfigEntry<bool> CfgQuietConsoleInfo;
         internal static ConfigEntry<bool> CfgQuietDiskInfo;
         internal static ConfigEntry<bool> CfgStripUnityLogStackTraces;
@@ -226,7 +227,12 @@ namespace EM2026PerfBoost
 
             CfgFastAiTransfers = Config.Bind(
                 "Simulation", "PruneDormantFromAiTransfers", true,
-                "Accelerates AiAcquisitionPasses.AITransfers by pruning dormant/locked clubs and memoizing pure per-pass price/eligibility/offer lookups with zero gameplay change.");
+                "Accelerates daily AI transfer passes by pruning dormant/locked clubs and memoizing 11 hot pure EMSkinCore lookups with zero gameplay change.");
+
+            CfgEmptyScanSkipDays = Config.Bind(
+                "Simulation", "EmptyScanSkipDays", 3,
+                new ConfigDescription("Staggers redundant re-scans for non-priority AI clubs (_scratchOtherTeams) that scanned all ~6,000 players and found zero candidates (0 = rescan every day, 3 = recheck every 3 days; priority <5-player clubs and clubs whose squad/budget changed ALWAYS scan immediately).",
+                    new AcceptableValueRange<int>(0, 7)));
 
             CfgQuietConsoleInfo = Config.Bind(
                 "Logging", "QuietConsoleInfo", true,
