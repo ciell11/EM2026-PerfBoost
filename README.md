@@ -21,7 +21,8 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 | **Fast AI Transfers Accelerator** (`FastAiTransfers`) | Prunes dormant/folded and locked clubs from `AiAcquisitionPasses.AITransfers` buckets **and** memoizes 8 hot pure `EMSkinCore` C# calculations (`PlayerMoney.Value`, `PlayerMoney.Wage`, `AiIdentity.StarRank`, `MarketView.ClubRatio`, `ClubPlan.WantsOut`, `AiSight.StarsError`, `Dormant.Is`, and negative `LockedClub.Blocks` checks) strictly during `AITransfers` using 100% pure managed Harmony — invalidated immediately on any offer/deal/pricelist change. **100% identical** transfer outcomes! |
 | **AI Identity Pool Cache** (`AiPoolCache`) | Reuses `iamgri mod`'s 88-bloc / ~6,320-player scan (`AiIdentity._pool`, 60–131 ms/day) across quiet days and invalidates **immediately** on any transfer/offer (`OfferActivityVersion`), player/team count change, slot change, or weekly growth rollover. |
 | **Thread-Safe AI Matches Fix** (`MatchThreadSafety`) | Takes a defensive thread-safe snapshot of `MatchesEngine.ProcessAIMatches` to prevent `InvalidOperationException: Collection was modified` when background day offloading and third-place decider mods run concurrently. |
-| **Log & Stack-Trace Throttler** (`LogThrottler`) | Filters verbose `Info`/`Debug` spam from `iamgri mod` and `Iamgri Better` out of the synchronous Windows console window, and disables native Unity stack-trace walking on `Debug.Log` / `Debug.LogWarning` (keeping `Error`/`Exception` traces 100% enabled) to eliminate `Player.log` freeze storms. |
+| **IamgriBetter 1.3.0+ Optimizer** (`Better130Optimizer`) | Dynamically attaches to **IamgriBetter 1.3.0 / 1.3.0-hotfix** at runtime (zero hard dependency) to eliminate its three biggest FPS bottlenecks: stops `MenuPresentation.Refresh()` from dirtying Unity Canvas & TMP meshes every single frame, replaces per-badge reflection (`BadgeColours.BeforeGet`) and per-row IL2CPP lookups (`TeamColor` / `TableColor`) with an O(1) cache invalidated instantly when custom colors are saved, and throttles `IconRecovery.BeforeTick` reflection scans. |
+| **Log & Stack-Trace Throttler** (`LogThrottler`) | Filters verbose `Info`/`Debug` spam from `iamgri mod`, `Iamgri Better`, `IamgriGrandSlam`, `IamgriThirdPlace`, and `IamgriUpdateFeatures` out of the synchronous Windows console window, and disables native Unity stack-trace walking on `Debug.Log` / `Debug.LogWarning` (keeping `Error`/`Exception` traces 100% enabled) to eliminate `Player.log` freeze storms. |
 
 ---
 
@@ -29,20 +30,20 @@ A lightweight, non-destructive performance, FPS, and long-career stability optim
 
 - **Game:** Esports Manager 2026 (Steam, Unity 6000.5 / IL2CPP)
 - **Mod Loader:** [EM2026 ModKit](https://www.nexusmods.com/esportsmanager2026/mods/66) v2.2+ (BepInEx 6 IL2CPP)
-- **Mods:** Works standalone, with **iamgri mod 4.x**, and with **Iamgri Better 1.1.x**.
-  Dynamically attaches to `EMSkinCore` at runtime with zero compile-time dependency, so it stays compatible across `iamgri mod` updates and hot-reloads.
+- **Mods:** Works standalone, with **iamgri mod 4.1.x**, and with **Iamgri Better 1.1.x – 1.3.0-hotfix**.
+  Dynamically attaches to `EMSkinCore` and `IamgriBetter` at runtime with zero compile-time dependency, so it stays compatible across updates and hot-reloads.
 
 ---
 
-## Installation
+## Installation & Updating Mid-Career
 
 1. Install **EM2026 ModKit v2.2+** first.
-2. Download `EM2026PerfBoost-v1.3.4.zip` from the [**Releases**](../../releases/latest) page.
-3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), so you have:
+2. Download `EM2026PerfBoost-v0.7.0.zip` from the [**Releases**](../../releases/latest) page.
+3. Extract the archive into your **Esports Manager 2026** root folder (next to `EsportsManager.exe`), **overwriting the old `EM2026PerfBoost.dll` if updating**:
    ```text
    Esports Manager 2026\BepInEx\plugins\EM2026PerfBoost\EM2026PerfBoost.dll
    ```
-4. Launch the game from Steam. The config file is generated automatically on first launch at:
+4. Launch the game from Steam and load your existing career — **100% save-safe mid-career** (zero save format changes, existing `.cfg` settings preserved). The config file lives at:
    ```text
    BepInEx\config\local.em2026.perfboost.cfg
    ```
@@ -101,6 +102,7 @@ All options live in `BepInEx\config\local.em2026.perfboost.cfg`:
 | `[Logging]` | `StripUnityLogStackTraces` | `true` | Disable native Unity stack-trace walking on `Debug.Log`/`LogWarning` (keeps `Error`/`Exception` traces) |
 | `[Memory]` | `SmoothIncrementalGC` | `true` | Cap Unity's incremental GC slice in UI scenes for smoother frame pacing (3D matches untouched) |
 | `[Memory]` | `IncrementalGcSliceMs` | `4` | Incremental GC time budget per frame in milliseconds (`4 ms` balances smooth UI with fast collection on large 2029+ saves) |
+| `[IamgriBetter]` | `OptimizeIamgriBetter130` | `true` | Eliminates per-frame Canvas/TMP rebuilds, reflection badge/color spam, and heavy icon-recovery scans in `IamgriBetter 1.3.0+` |
 | `[Diagnostics]` | `LogPeriodicSummary` | `true` | Log a telemetry summary every 5 minutes (and on `F9`) |
 
 ---

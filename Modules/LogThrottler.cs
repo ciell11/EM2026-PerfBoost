@@ -80,7 +80,10 @@ namespace EM2026PerfBoost.Modules
                 return false;
 
             return string.Equals(src, "iamgri mod", StringComparison.Ordinal)
-                || string.Equals(src, "Iamgri Better", StringComparison.Ordinal);
+                || string.Equals(src, "Iamgri Better", StringComparison.Ordinal)
+                || string.Equals(src, "IamgriGrandSlam", StringComparison.Ordinal)
+                || string.Equals(src, "IamgriThirdPlace", StringComparison.Ordinal)
+                || string.Equals(src, "IamgriUpdateFeatures", StringComparison.Ordinal);
         }
 
         private static bool ConsoleLogEvent_Prefix(LogEventArgs __1)

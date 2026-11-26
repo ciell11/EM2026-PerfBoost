@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.3.4";
+        public const string PluginVersion = "0.7.0";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -55,6 +55,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<bool> CfgStripUnityLogStackTraces;
         internal static ConfigEntry<bool> CfgSmoothIncrementalGc;
         internal static ConfigEntry<int> CfgGcSliceMs;
+        internal static ConfigEntry<bool> CfgOptimizeIamgriBetter;
         internal static ConfigEntry<bool> CfgPeriodicTelemetry;
 
         private static bool _in3DMatchScene;
@@ -112,10 +113,14 @@ namespace EM2026PerfBoost
                     Logger.LogWarning("EventSystem.Update not found; core polling disabled.");
                 }
 
-                // Attempt immediate attach if EMSkinCore is already loaded
+                // Attempt immediate attach if EMSkinCore or IamgriBetter is already loaded
                 if (CoreBridge.Poll(out var coreAsm))
                 {
                     AttachToCore(coreAsm);
+                }
+                if (CfgOptimizeIamgriBetter.Value)
+                {
+                    Better130Optimizer.PollAndAttach(GameHarmony);
                 }
 
                 _nextAutoReportTime = Time.unscaledTime + 120f;
@@ -243,6 +248,10 @@ namespace EM2026PerfBoost
                 new ConfigDescription("Incremental GC time budget per frame in milliseconds when SmoothIncrementalGC is enabled (4 ms balances smooth UI pacing with fast collection on large 2029+ saves).",
                     new AcceptableValueRange<int>(1, 10)));
 
+            CfgOptimizeIamgriBetter = Config.Bind(
+                "IamgriBetter", "OptimizeIamgriBetter130", true,
+                "Eliminates per-frame Canvas/TMP rebuilds, reflection badge/color spam, and heavy icon-recovery scans in IamgriBetter 1.3.0+ with zero visual or gameplay change.");
+
             CfgPeriodicTelemetry = Config.Bind(
                 "Diagnostics", "LogPeriodicSummary", true,
                 "Logs a one-block performance telemetry summary every 5 minutes (and on F9 key press).");
@@ -269,6 +278,8 @@ namespace EM2026PerfBoost
 
                 if (CfgFastAiTransfers.Value)
                     FastAiTransfers.AttachToCore(CoreHarmony, coreAsm);
+
+                Better130Optimizer.OnCoreAttached(coreAsm);
 
                 Logger.LogMessage("Successfully attached to EMSkinCore.");
             }
@@ -300,6 +311,12 @@ namespace EM2026PerfBoost
                 if (CoreBridge.Poll(out var newCore))
                 {
                     AttachToCore(newCore);
+                }
+
+                // Attach dynamically to IamgriBetter 1.3.0+ once loaded
+                if (CfgOptimizeIamgriBetter.Value && !Better130Optimizer.IsAttached)
+                {
+                    Better130Optimizer.PollAndAttach(GameHarmony);
                 }
 
                 // Periodic lightweight enforcement, timeScale watchdog & idle memory guard

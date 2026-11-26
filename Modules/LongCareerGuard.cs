@@ -164,6 +164,7 @@ namespace EM2026PerfBoost.Modules
             FastAiTransfers.ResetState();
             SmartAutosave.ResetState();
             DaySpeedBooster.ResetState();
+            Better130Optimizer.ResetState();
             _baselineHeapBytes = ReadCurrentHeapBytes();
             Interlocked.Increment(ref PerfTelemetry.SlotCacheFlushes);
         }

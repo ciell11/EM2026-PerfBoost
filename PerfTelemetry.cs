@@ -74,6 +74,10 @@ namespace EM2026PerfBoost
         public static long MemoryLastHeapMb;
         public static long SlotCacheFlushes;
 
+        public static long BetterMenuRefreshesSkipped;
+        public static long BetterColorCacheHits;
+        public static long BetterIconChecksSkipped;
+
         public static void RecordDayAdvance(long ms)
         {
             Interlocked.Increment(ref DaysAdvanced);
@@ -140,6 +144,7 @@ namespace EM2026PerfBoost
 
             sb.AppendLine($"[FPS] Target: {Plugin.CfgTargetFps.Value} (VSyncOff={Plugin.CfgDisableVSync.Value}), enforcements: {Interlocked.Read(ref FpsEnforcements)}");
             sb.AppendLine($"[LongCareer] Idle cleanups: {Interlocked.Read(ref MemoryCleanups)} (freed {Interlocked.Read(ref MemoryFreedMbTotal)} MB, last heap {Interlocked.Read(ref MemoryLastHeapMb)} MB) | Slot cache flushes: {Interlocked.Read(ref SlotCacheFlushes)}");
+            sb.AppendLine($"[IamgriBetter 1.3] Menu Canvas skips: {Interlocked.Read(ref BetterMenuRefreshesSkipped)} | Color/badge cache hits: {Interlocked.Read(ref BetterColorCacheHits)} | Icon scans throttled: {Interlocked.Read(ref BetterIconChecksSkipped)}");
             sb.AppendLine($"[Stability] ProcessAIMatches safe snapshots: {Interlocked.Read(ref MatchSnapshotsTaken)} (concurrent retries: {Interlocked.Read(ref MatchSnapshotRetries)})");
             sb.AppendLine($"[Logging] Console spam filtered: {Interlocked.Read(ref ConsoleLinesFiltered)}, Disk filtered: {Interlocked.Read(ref DiskLinesFiltered)}");
             sb.Append("================================================");
