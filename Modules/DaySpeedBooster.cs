@@ -187,6 +187,8 @@ namespace EM2026PerfBoost.Modules
 
         private static void CheckForEvents_Postfix(bool __result)
         {
+            DayEnd_Postfix();
+
             try
             {
                 if (_coreDayPaceAttached || !Plugin.CfgFastDayTransitions.Value || Plugin.In3DMatchScene)
@@ -209,6 +211,7 @@ namespace EM2026PerfBoost.Modules
 
         private static void NextDayDate_Prefix()
         {
+            Interlocked.Exchange(ref _dayStartTimestamp, Stopwatch.GetTimestamp());
             if (!_standaloneBoostActive)
                 return;
             ResetTimeScaleIfBoosted();

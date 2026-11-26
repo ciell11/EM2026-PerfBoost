@@ -25,13 +25,14 @@ namespace EM2026PerfBoost
 
         public static long BucketsPrunedTotal;
         public static long EmptyScanSkipsTotal;
+        public static long RoundRobinDeferredTotal;
         public static long AiMemoHitsTotal;
         public static int LastPrioBefore;
         public static int LastPrioAfter;
         public static int LastOtherBefore;
         public static int LastOtherAfter;
 
-        public static void RecordBucketPrune(int prioBefore, int prioAfter, int otherBefore, int otherAfter, int prunedDormant, int prunedEmpty = 0)
+        public static void RecordBucketPrune(int prioBefore, int prioAfter, int otherBefore, int otherAfter, int prunedDormant, int prunedEmpty = 0, int sliceDeferred = 0)
         {
             LastPrioBefore = prioBefore;
             LastPrioAfter = prioAfter;
@@ -41,6 +42,8 @@ namespace EM2026PerfBoost
                 Interlocked.Add(ref BucketsPrunedTotal, prunedDormant);
             if (prunedEmpty > 0)
                 Interlocked.Add(ref EmptyScanSkipsTotal, prunedEmpty);
+            if (sliceDeferred > 0)
+                Interlocked.Add(ref RoundRobinDeferredTotal, sliceDeferred);
         }
 
         public static void AddSubPass(int idx, long ms)
@@ -143,7 +146,7 @@ namespace EM2026PerfBoost
             double dayAvg = days > 0 ? (double)Interlocked.Read(ref DaysTotalMs) / days : 0;
             sb.AppendLine(string.Format(inv, "[Days] Advanced: {0}, avg {1:0.0} ms, max {2} ms | Pauses accelerated: {3}", days, dayAvg, Interlocked.Read(ref DaysMaxMs), Interlocked.Read(ref DayPausesAccelerated)));
             sb.AppendLine($"[ContractEngine] DailyAi: {Interlocked.Read(ref SubPassMs[0])}ms ({Interlocked.Read(ref SubPassCalls[0])}x) | Maint: {Interlocked.Read(ref SubPassMs[1])}ms ({Interlocked.Read(ref SubPassCalls[1])}x) | AITransfers: {Interlocked.Read(ref SubPassMs[2])}ms ({Interlocked.Read(ref SubPassCalls[2])}x) | Listed: {Interlocked.Read(ref SubPassMs[3])}ms ({Interlocked.Read(ref SubPassCalls[3])}x) | Pool: {Interlocked.Read(ref SubPassMs[4])}ms ({Interlocked.Read(ref SubPassCalls[4])}x) | Renew: {Interlocked.Read(ref SubPassMs[5])}ms ({Interlocked.Read(ref SubPassCalls[5])}x) | Expiries: {Interlocked.Read(ref SubPassMs[6])}ms ({Interlocked.Read(ref SubPassCalls[6])}x)");
-            sb.AppendLine($"[FastAiTransfers] Pruned dormant: {Interlocked.Read(ref BucketsPrunedTotal)}, empty-scan skips: {Interlocked.Read(ref EmptyScanSkipsTotal)} (last day: prio {LastPrioBefore}->{LastPrioAfter}, other {LastOtherBefore}->{LastOtherAfter}) | Memoized cache hits: {Interlocked.Read(ref AiMemoHitsTotal)}");
+            sb.AppendLine($"[FastAiTransfers] Pruned dormant: {Interlocked.Read(ref BucketsPrunedTotal)}, cooldown skips: {Interlocked.Read(ref EmptyScanSkipsTotal)}, round-robin deferred: {Interlocked.Read(ref RoundRobinDeferredTotal)} (last day: prio {LastPrioBefore}->{LastPrioAfter}, other {LastOtherBefore}->{LastOtherAfter}) | Memoized cache hits: {Interlocked.Read(ref AiMemoHitsTotal)}");
 
             sb.AppendLine($"[FPS] Target: {Plugin.CfgTargetFps.Value} (VSyncOff={Plugin.CfgDisableVSync.Value}), enforcements: {Interlocked.Read(ref FpsEnforcements)}");
             sb.AppendLine($"[LongCareer] Idle cleanups: {Interlocked.Read(ref MemoryCleanups)} (freed {Interlocked.Read(ref MemoryFreedMbTotal)} MB, last heap {Interlocked.Read(ref MemoryLastHeapMb)} MB) | Slot cache flushes: {Interlocked.Read(ref SlotCacheFlushes)}");

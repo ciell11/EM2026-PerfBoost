@@ -19,7 +19,7 @@ namespace EM2026PerfBoost
     {
         public const string PluginGuid = "local.em2026.perfboost";
         public const string PluginName = "EM2026 PerfBoost";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.5.1";
 
         internal static ManualLogSource Logger;
         internal static Harmony GameHarmony;
@@ -50,6 +50,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<bool> CfgAiPoolCache;
         internal static ConfigEntry<int> CfgAiPoolMaxCacheDays;
         internal static ConfigEntry<bool> CfgFastAiTransfers;
+        internal static ConfigEntry<int> CfgMaxOtherTeamsPerDay;
         internal static ConfigEntry<int> CfgEmptyScanSkipDays;
         internal static ConfigEntry<bool> CfgQuietConsoleInfo;
         internal static ConfigEntry<bool> CfgQuietDiskInfo;
@@ -227,11 +228,16 @@ namespace EM2026PerfBoost
 
             CfgFastAiTransfers = Config.Bind(
                 "Simulation", "PruneDormantFromAiTransfers", true,
-                "Accelerates daily AI transfer passes by pruning dormant/locked clubs and memoizing 11 hot pure EMSkinCore lookups with zero gameplay change.");
+                "Accelerates daily AI transfer passes by pruning dormant/locked clubs, round-robin slicing lower-tier scans, and memoizing 13 hot pure EMSkinCore lookups with zero gameplay change.");
+
+            CfgMaxOtherTeamsPerDay = Config.Bind(
+                "Simulation", "MaxOtherTeamsPerDay", 24,
+                new ConfigDescription("Fair deterministic round-robin daily budget for non-priority AI clubs (_scratchOtherTeams, ~180 lower-tier clubs). 24 scans all lower-tier clubs cleanly once per in-game week for ~7-8x faster day skips starting on Day 1 (0 = scan all ~180 every single day). Priority clubs and your own club ALWAYS scan every day!",
+                    new AcceptableValueRange<int>(0, 532)));
 
             CfgEmptyScanSkipDays = Config.Bind(
-                "Simulation", "EmptyScanSkipDays", 7,
-                new ConfigDescription("Staggers redundant re-scans for non-priority AI clubs (_scratchOtherTeams) that found no pick (0 = daily, 7 = weekly re-check / ~5-7x faster day skips; priority clubs, clubs with picks, and any club whose squad shrinks or TransferBudget grows by >$25k ALWAYS scan immediately).",
+                "Simulation", "EmptyScanSkipDays", 5,
+                new ConfigDescription("Cooldown days for non-priority AI clubs (_scratchOtherTeams) that ran a full market scan and completed 0 signings (0 = disabled, 5 = skip redundant re-scans for 5 days; wakes up immediately if squad shrinks, TransferBudget grows by >$25k, month changes, or world player count shifts).",
                     new AcceptableValueRange<int>(0, 14)));
 
             CfgQuietConsoleInfo = Config.Bind(
@@ -267,25 +273,25 @@ namespace EM2026PerfBoost
                 "Diagnostics", "ConfigSchemaVersion", 0,
                 "Internal config migration marker so drop-in updates upgrade old defaults automatically while keeping custom user values.");
 
-            // One-time seamless migration for players upgrading over v1.2.x / v1.3.x / v1.4.x without deleting their .cfg
-            if (CfgConfigSchemaVersion.Value < 150)
+            // One-time seamless migration for players upgrading over v1.2.x / v1.3.x / v1.4.x / v1.5.0 without deleting their .cfg
+            if (CfgConfigSchemaVersion.Value < 151)
             {
                 bool migrated = false;
                 if (Math.Abs(CfgDayPauseSpeed.Value - 60f) < 0.01f) { CfgDayPauseSpeed.Value = 100f; migrated = true; }
                 if (CfgMemoryGuardGrowthMb.Value == 1024 || CfgMemoryGuardGrowthMb.Value == 384) { CfgMemoryGuardGrowthMb.Value = 512; migrated = true; }
                 if (CfgMemoryGuardCooldownSec.Value == 180 || CfgMemoryGuardCooldownSec.Value == 75) { CfgMemoryGuardCooldownSec.Value = 120; migrated = true; }
                 if (CfgUnloadAssetsThresholdMb.Value == 2560 || CfgUnloadAssetsThresholdMb.Value == 1400) { CfgUnloadAssetsThresholdMb.Value = 2200; migrated = true; }
-                if (CfgEmptyScanSkipDays.Value == 3 || CfgEmptyScanSkipDays.Value == 5) { CfgEmptyScanSkipDays.Value = 7; migrated = true; }
+                if (CfgEmptyScanSkipDays.Value == 3 || CfgEmptyScanSkipDays.Value == 7) { CfgEmptyScanSkipDays.Value = 5; migrated = true; }
                 if (!CfgSmoothIncrementalGc.Value && CfgGcSliceMs.Value == 2)
                 {
                     CfgSmoothIncrementalGc.Value = true;
                     CfgGcSliceMs.Value = 4;
                     migrated = true;
                 }
-                CfgConfigSchemaVersion.Value = 150;
+                CfgConfigSchemaVersion.Value = 151;
                 Config.Save();
                 if (migrated)
-                    Logger?.LogMessage("[Config] Automatically migrated default values to v1.5.0 tuning (100x day pause, EmptyScanSkipDays=7, 512 MB gentle RAM trim).");
+                    Logger?.LogMessage("[Config] Automatically migrated default values to v1.5.1 tuning (MaxOtherTeamsPerDay=24, EmptyScanSkipDays=5, 100x day pause, 512 MB gentle RAM trim).");
             }
         }
 
