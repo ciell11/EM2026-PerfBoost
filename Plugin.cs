@@ -57,6 +57,7 @@ namespace EM2026PerfBoost
         internal static ConfigEntry<int> CfgGcSliceMs;
         internal static ConfigEntry<bool> CfgOptimizeIamgriBetter;
         internal static ConfigEntry<bool> CfgPeriodicTelemetry;
+        internal static ConfigEntry<int> CfgConfigSchemaVersion;
 
         private static bool _in3DMatchScene;
         private static int _lastSceneHandle = int.MinValue;
@@ -255,6 +256,24 @@ namespace EM2026PerfBoost
             CfgPeriodicTelemetry = Config.Bind(
                 "Diagnostics", "LogPeriodicSummary", true,
                 "Logs a one-block performance telemetry summary every 5 minutes (and on F9 key press).");
+
+            CfgConfigSchemaVersion = Config.Bind(
+                "Diagnostics", "ConfigSchemaVersion", 0,
+                "Internal config migration marker so drop-in updates upgrade old defaults automatically while keeping custom user values.");
+
+            // One-time seamless migration for players upgrading over v1.3.x / v0.7.0 without deleting their .cfg
+            if (CfgConfigSchemaVersion.Value < 8)
+            {
+                bool migrated = false;
+                if (Math.Abs(CfgDayPauseSpeed.Value - 60f) < 0.01f) { CfgDayPauseSpeed.Value = 100f; migrated = true; }
+                if (CfgMemoryGuardGrowthMb.Value == 1024) { CfgMemoryGuardGrowthMb.Value = 384; migrated = true; }
+                if (CfgMemoryGuardCooldownSec.Value == 180) { CfgMemoryGuardCooldownSec.Value = 75; migrated = true; }
+                if (CfgUnloadAssetsThresholdMb.Value == 2560) { CfgUnloadAssetsThresholdMb.Value = 1400; migrated = true; }
+                CfgConfigSchemaVersion.Value = 8;
+                Config.Save();
+                if (migrated)
+                    Logger?.LogMessage("[Config] Automatically upgraded old default values to v0.8.0 tuning (100x day pause, 384 MB RAM trim).");
+            }
         }
 
         private static void AttachToCore(Assembly coreAsm)
